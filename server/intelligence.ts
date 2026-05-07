@@ -42,8 +42,8 @@ Ensure the JSON is valid and contains only these fields.`;
     });
 
     const content = response.choices?.[0]?.message?.content;
-    if (!content) {
-      console.warn("[LLM] No content in response");
+    if (!content || typeof content !== "string") {
+      console.warn("[LLM] No content in response or content is not a string");
       return null;
     }
 
