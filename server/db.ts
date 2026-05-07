@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { eq, desc, and, gte, lte, lt, gt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { InsertUser, users, markets, signals, orders, trades, equitySnapshots, botConfig, bayesianPriors, InsertMarket, InsertSignal, InsertOrder, InsertTrade, InsertEquitySnapshot, InsertBotConfig, InsertBayesianPrior } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -89,4 +89,189 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+/**
+ * Markets
+ */
+export async function getMarketByMarketId(marketId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(markets).where(eq(markets.marketId, marketId)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getEligibleMarkets(minVolume: number, maxSpread: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(markets)
+    .where(
+      and(
+        gte(markets.volume24h, minVolume.toString()),
+        lte(markets.spread, maxSpread.toString()),
+        gt(markets.expiresAt, new Date())
+      )
+    )
+    .limit(50);
+}
+
+export async function upsertMarket(market: InsertMarket) {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .insert(markets)
+    .values(market)
+    .onDuplicateKeyUpdate({
+      set: {
+        volume24h: market.volume24h,
+        bestBid: market.bestBid,
+        bestAsk: market.bestAsk,
+        spread: market.spread,
+        lastUpdatedAt: new Date(),
+      },
+    });
+}
+
+/**
+ * Signals
+ */
+export async function insertSignal(signal: InsertSignal) {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(signals).values(signal);
+}
+
+export async function getRecentSignals(marketId: string, minutesBack: number = 5) {
+  const db = await getDb();
+  if (!db) return [];
+  const cutoff = new Date(Date.now() - minutesBack * 60 * 1000);
+  return db
+    .select()
+    .from(signals)
+    .where(and(eq(signals.marketId, marketId), gte(signals.collectedAt, cutoff)))
+    .orderBy(desc(signals.collectedAt));
+}
+
+/**
+ * Orders
+ */
+export async function insertOrder(order: InsertOrder) {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(orders).values(order);
+}
+
+export async function getOrderByNonce(nonce: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(orders).where(eq(orders.nonce, nonce)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getOpenOrders() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(orders).where(eq(orders.status, "pending"));
+}
+
+export async function updateOrderStatus(nonce: string, status: "filled" | "cancelled" | "expired") {
+  const db = await getDb();
+  if (!db) return;
+  const now = new Date();
+  const updateData: Record<string, unknown> = { status };
+  if (status === "filled") updateData.filledAt = now;
+  if (status === "cancelled") updateData.cancelledAt = now;
+  await db.update(orders).set(updateData).where(eq(orders.nonce, nonce));
+}
+
+/**
+ * Trades
+ */
+export async function insertTrade(trade: InsertTrade) {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(trades).values(trade);
+}
+
+export async function getRecentTrades(limit: number = 20) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(trades).orderBy(desc(trades.filledAt)).limit(limit);
+}
+
+/**
+ * Equity Snapshots
+ */
+export async function insertEquitySnapshot(snapshot: InsertEquitySnapshot) {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(equitySnapshots).values(snapshot);
+}
+
+export async function getLatestEquitySnapshot() {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(equitySnapshots).orderBy(desc(equitySnapshots.timestamp)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getEquityHistory(hoursBack: number = 24) {
+  const db = await getDb();
+  if (!db) return [];
+  const cutoff = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+  return db
+    .select()
+    .from(equitySnapshots)
+    .where(gte(equitySnapshots.timestamp, cutoff))
+    .orderBy(equitySnapshots.timestamp);
+}
+
+/**
+ * Bot Configuration
+ */
+export async function getBotConfig() {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(botConfig).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function initializeBotConfig(config: InsertBotConfig) {
+  const db = await getDb();
+  if (!db) return;
+  const existing = await getBotConfig();
+  if (!existing) {
+    await db.insert(botConfig).values(config);
+  }
+}
+
+export async function updateBotConfig(updates: Partial<InsertBotConfig>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(botConfig).set(updates);
+}
+
+/**
+ * Bayesian Priors
+ */
+export async function getBayesianPrior(category: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(bayesianPriors).where(eq(bayesianPriors.category, category)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function upsertBayesianPrior(prior: InsertBayesianPrior) {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .insert(bayesianPriors)
+    .values(prior)
+    .onDuplicateKeyUpdate({
+      set: {
+        priorProbability: prior.priorProbability,
+        sampleSize: prior.sampleSize,
+        updatedAt: new Date(),
+      },
+    });
+}
