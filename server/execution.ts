@@ -51,6 +51,14 @@ export async function placeGTCLimitOrder(
       };
     }
 
+    if (executionMode === "live") {
+      return {
+        nonce,
+        status: "error",
+        reason: "Live CLOB execution is disabled until signed order placement is implemented",
+      };
+    }
+
     // Create order record
     const orderData: InsertOrder = {
       nonce,
@@ -68,22 +76,12 @@ export async function placeGTCLimitOrder(
     // Insert into database
     await insertOrder(orderData);
 
-    if (executionMode === "paper") {
-      // Paper mode: simulate successful placement
-      console.log(`[PAPER] Order placed: ${nonce} - ${input.side} ${input.size} @ ${input.price}`);
-      return {
-        nonce,
-        status: "pending",
-      };
-    } else {
-      // Live mode: call Polymarket CLOB API (stubbed)
-      // TODO: Implement actual CLOB API call with EIP-712 signature
-      console.log(`[LIVE] Order placed: ${nonce} - ${input.side} ${input.size} @ ${input.price}`);
-      return {
-        nonce,
-        status: "pending",
-      };
-    }
+    // Paper mode: simulate successful placement
+    console.log(`[PAPER] Order placed: ${nonce} - ${input.side} ${input.size} @ ${input.price}`);
+    return {
+      nonce,
+      status: "pending",
+    };
   } catch (error) {
     console.error("[Execution] Error placing order:", error);
     return {
@@ -100,7 +98,8 @@ export async function placeGTCLimitOrder(
 export async function cancelOrder(nonce: string, executionMode: "paper" | "live"): Promise<boolean> {
   try {
     if (executionMode === "live") {
-      // TODO: Call Polymarket CLOB API to cancel order
+      console.error("[Execution] Refusing live cancel: CLOB cancellation adapter is not implemented");
+      return false;
     }
 
     // Update database

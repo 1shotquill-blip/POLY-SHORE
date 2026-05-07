@@ -1,0 +1,140 @@
+import type {
+  AgentMarket,
+  EnsembleDecision,
+  MarketDataStatus,
+  PortfolioSnapshot,
+  RiskDecision,
+  RiskLimits,
+  TradeIntent,
+} from "./types";
+
+export const DEFAULT_RISK_LIMITS: RiskLimits = {
+  minEdge: 0.06,
+  minConfidence: 0.7,
+  maxSpread: 0.03,
+  maxMarketDataAgeSeconds: 10,
+  maxModelDisagreement: 0.18,
+  maxSingleMarketExposurePct: 3,
+  maxCategoryExposurePct: 8,
+  maxTotalExposurePct: 20,
+  maxOrderSizeUsd: 100,
+  maxDailyLossPct: 3,
+  maxDrawdownPct: 8,
+  maxOpenOrders: 20,
+  liquidityParticipationLimitPct: 2,
+  fractionalKelly: 0.25,
+};
+
+export function clampProbability(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+export function computeBinaryKellyFraction(probability: number, price: number): number {
+  const p = clampProbability(probability);
+  const c = clampProbability(price);
+  if (p <= 0 || p >= 1 || c <= 0 || c >= 1) return 0;
+
+  const b = 1 / c - 1;
+  const q = 1 - p;
+  const kelly = (b * p - q) / b;
+  return Math.max(0, kelly);
+}
+
+export function computeDrawdownPct(bankrollUsd: number, peakBankrollUsd: number): number {
+  if (peakBankrollUsd <= 0) return 0;
+  return Math.max(0, ((peakBankrollUsd - bankrollUsd) / peakBankrollUsd) * 100);
+}
+
+export function classifyMarketData(market: AgentMarket, limits: RiskLimits, now = new Date()): MarketDataStatus {
+  const ageSeconds = (now.getTime() - market.orderbookUpdatedAt.getTime()) / 1000;
+  if (!Number.isFinite(market.bestBid) || !Number.isFinite(market.bestAsk)) return "invalid";
+  if (market.bestBid < 0 || market.bestAsk > 1 || market.bestBid >= market.bestAsk) return "invalid";
+  if (ageSeconds > limits.maxMarketDataAgeSeconds) return "stale";
+  if (market.spread > limits.maxSpread) return "wide_spread";
+  if (market.liquidity <= 0 || market.volume24h <= 0) return "illiquid";
+  return "fresh";
+}
+
+export function evaluateRisk(
+  market: AgentMarket,
+  ensemble: EnsembleDecision,
+  portfolio: PortfolioSnapshot,
+  limits: RiskLimits = DEFAULT_RISK_LIMITS,
+  now = new Date()
+): RiskDecision {
+  const reasons: string[] = [];
+  const marketDataStatus = classifyMarketData(market, limits, now);
+  const buyEdge = ensemble.estimatedProbability - market.bestAsk;
+  const sellEdge = market.bestBid - ensemble.estimatedProbability;
+  const shouldBuy = buyEdge >= sellEdge;
+  const selectedEdge = shouldBuy ? buyEdge : sellEdge;
+  const selectedPrice = shouldBuy ? market.bestAsk : market.bestBid;
+  const tokenId = ensemble.outcome === "yes" ? market.yesTokenId : market.noTokenId;
+  const drawdownPct = computeDrawdownPct(portfolio.bankrollUsd, portfolio.peakBankrollUsd);
+  const dailyLossPct = portfolio.bankrollUsd > 0 ? Math.max(0, (-portfolio.dailyPnlUsd / portfolio.bankrollUsd) * 100) : 0;
+
+  if (portfolio.reconciliationStatus !== "ok") reasons.push("portfolio reconciliation is not clean");
+  if (marketDataStatus !== "fresh") reasons.push(`market data is ${marketDataStatus}`);
+  if (selectedEdge < limits.minEdge) reasons.push(`edge ${selectedEdge.toFixed(4)} below minimum ${limits.minEdge}`);
+  if (ensemble.confidence < limits.minConfidence) reasons.push(`confidence ${ensemble.confidence.toFixed(4)} below minimum ${limits.minConfidence}`);
+  if (ensemble.modelDisagreement > limits.maxModelDisagreement) reasons.push("model disagreement exceeds limit");
+  if (drawdownPct >= limits.maxDrawdownPct) reasons.push("drawdown kill switch is active");
+  if (dailyLossPct >= limits.maxDailyLossPct) reasons.push("daily loss limit is reached");
+  if (portfolio.openOrderCount >= limits.maxOpenOrders) reasons.push("open order limit is reached");
+
+  const rawKelly = computeBinaryKellyFraction(ensemble.estimatedProbability, selectedPrice);
+  const confidenceAdjustedKelly = rawKelly * ensemble.confidence * limits.fractionalKelly;
+  const kellySizeUsd = portfolio.bankrollUsd * confidenceAdjustedKelly;
+  const singleMarketCapUsd = portfolio.bankrollUsd * (limits.maxSingleMarketExposurePct / 100);
+  const categoryCapUsd = portfolio.bankrollUsd * (limits.maxCategoryExposurePct / 100);
+  const totalCapUsd = portfolio.bankrollUsd * (limits.maxTotalExposurePct / 100);
+  const liquidityCapUsd = market.liquidity * (limits.liquidityParticipationLimitPct / 100);
+
+  const currentMarketExposure = portfolio.marketExposureUsd[market.marketId] ?? 0;
+  const currentCategoryExposure = market.category ? portfolio.categoryExposureUsd[market.category] ?? 0 : 0;
+  const remainingSingleMarketUsd = Math.max(0, singleMarketCapUsd - currentMarketExposure);
+  const remainingCategoryUsd = Math.max(0, categoryCapUsd - currentCategoryExposure);
+  const remainingTotalUsd = Math.max(0, totalCapUsd - portfolio.openExposureUsd);
+  const cappedSizeUsd = Math.min(
+    kellySizeUsd,
+    limits.maxOrderSizeUsd,
+    remainingSingleMarketUsd,
+    remainingCategoryUsd,
+    remainingTotalUsd,
+    liquidityCapUsd
+  );
+
+  if (cappedSizeUsd <= 0) reasons.push("position size reduced to zero by risk caps");
+
+  const intent: TradeIntent | undefined =
+    reasons.length === 0
+      ? {
+          marketId: market.marketId,
+          tokenId,
+          outcome: ensemble.outcome,
+          side: shouldBuy ? "buy" : "sell",
+          limitPrice: selectedPrice,
+          sizeUsd: cappedSizeUsd,
+          edge: selectedEdge,
+          estimatedProbability: ensemble.estimatedProbability,
+          confidence: ensemble.confidence,
+          rationale: ensemble.evidenceSummary,
+        }
+      : undefined;
+
+  return {
+    allowed: reasons.length === 0,
+    reasons,
+    intent,
+    diagnostics: {
+      buyEdge,
+      sellEdge,
+      selectedEdge,
+      kellyFraction: confidenceAdjustedKelly,
+      cappedSizeUsd,
+      drawdownPct,
+      marketDataStatus,
+    },
+  };
+}

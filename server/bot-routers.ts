@@ -7,6 +7,7 @@ import {
   getOpenOrders,
   getRecentSignals,
 } from "./db";
+import { ENV } from "./_core/env";
 
 export const botRouter = router({
   // Get bot status
@@ -58,6 +59,9 @@ export const botRouter = router({
     })
     .mutation(async ({ ctx, input }) => {
       if (ctx.user.role !== "admin") throw new Error("Unauthorized");
+      if (input.mode === "live" && !ENV.liveTradingEnabled) {
+        throw new Error("Live trading is disabled until the production CLOB adapter and reconciliation gates are complete");
+      }
       await updateBotConfig({ executionMode: input.mode as "paper" | "live" });
       return { success: true, mode: input.mode };
     }),

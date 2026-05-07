@@ -78,24 +78,84 @@ export const orders = mysqlTable(
   {
     id: int("id").autoincrement().primaryKey(),
     nonce: varchar("nonce", { length: 256 }).notNull().unique(),
+    exchangeOrderId: varchar("exchangeOrderId", { length: 256 }),
     marketId: varchar("marketId", { length: 256 }).notNull(),
     tokenId: varchar("tokenId", { length: 256 }).notNull(),
     side: mysqlEnum("side", ["buy", "sell"]).notNull(),
     price: decimal("price", { precision: 10, scale: 6 }).notNull(),
     size: decimal("size", { precision: 18, scale: 6 }).notNull(),
-    status: mysqlEnum("status", ["pending", "filled", "cancelled", "expired"]).default("pending").notNull(),
+    matchedSize: decimal("matchedSize", { precision: 18, scale: 6 }).default("0").notNull(),
+    status: mysqlEnum("status", ["pending", "partially_filled", "filled", "cancel_requested", "cancelled", "expired", "rejected"]).default("pending").notNull(),
+    lifecycleState: mysqlEnum("lifecycleState", [
+      "INTENT_CREATED",
+      "ORDER_SIGNED",
+      "ORDER_POSTED",
+      "ACCEPTED_BY_CLOB",
+      "PARTIALLY_FILLED",
+      "FILLED",
+      "CANCEL_REQUESTED",
+      "CANCEL_CONFIRMED",
+      "EXPIRED",
+      "REJECTED",
+      "RECONCILIATION_MISMATCH",
+    ]).default("INTENT_CREATED").notNull(),
     edgeAtPlacement: decimal("edgeAtPlacement", { precision: 10, scale: 6 }),
     confidenceAtPlacement: decimal("confidenceAtPlacement", { precision: 3, scale: 2 }),
+    rejectionReason: text("rejectionReason"),
     placedAt: timestamp("placedAt").defaultNow().notNull(),
+    acceptedAt: timestamp("acceptedAt"),
     filledAt: timestamp("filledAt"),
+    lastSyncedAt: timestamp("lastSyncedAt"),
     cancelledAt: timestamp("cancelledAt"),
     expiresAt: timestamp("expiresAt"),
   },
-  (t) => [index("idx_marketId_orders").on(t.marketId), index("idx_nonce").on(t.nonce), index("idx_status").on(t.status)]
+  (t) => [
+    index("idx_marketId_orders").on(t.marketId),
+    index("idx_nonce").on(t.nonce),
+    index("idx_exchangeOrderId").on(t.exchangeOrderId),
+    index("idx_status").on(t.status),
+    index("idx_lifecycleState").on(t.lifecycleState),
+  ]
 );
 
 export type Order = typeof orders.$inferSelect;
 export type InsertOrder = typeof orders.$inferInsert;
+
+/**
+ * Every agent decision, including skips. This is the primary dataset for
+ * improving win rate, expected value, calibration, and risk gates.
+ */
+export const decisionAudits = mysqlTable(
+  "decision_audits",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    tickId: varchar("tickId", { length: 128 }).notNull(),
+    marketId: varchar("marketId", { length: 256 }).notNull(),
+    question: text("question").notNull(),
+    action: mysqlEnum("action", ["skipped", "paper_order_submitted", "live_order_submitted"]).notNull(),
+    reasons: json("reasons"),
+    estimatedProbability: decimal("estimatedProbability", { precision: 10, scale: 6 }),
+    confidence: decimal("confidence", { precision: 3, scale: 2 }),
+    edge: decimal("edge", { precision: 10, scale: 6 }),
+    bestBid: decimal("bestBid", { precision: 10, scale: 6 }),
+    bestAsk: decimal("bestAsk", { precision: 10, scale: 6 }),
+    spread: decimal("spread", { precision: 10, scale: 6 }),
+    orderNonce: varchar("orderNonce", { length: 256 }),
+    exchangeOrderId: varchar("exchangeOrderId", { length: 256 }),
+    lifecycleStatus: varchar("lifecycleStatus", { length: 64 }),
+    diagnostics: json("diagnostics"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (t) => [
+    index("idx_decision_tickId").on(t.tickId),
+    index("idx_decision_marketId").on(t.marketId),
+    index("idx_decision_action").on(t.action),
+    index("idx_decision_createdAt").on(t.createdAt),
+  ]
+);
+
+export type DecisionAudit = typeof decisionAudits.$inferSelect;
+export type InsertDecisionAudit = typeof decisionAudits.$inferInsert;
 
 /**
  * Executed trades (filled orders with final P&L).

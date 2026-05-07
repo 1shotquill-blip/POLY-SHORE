@@ -15,6 +15,20 @@
       "when": 1778176044644,
       "tag": "0001_thick_lucky_pierre",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1778188973666,
+      "tag": "0002_narrow_wasp",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1778190007328,
+      "tag": "0003_complex_havok",
+      "breakpoints": true
     }
   ]
 }
