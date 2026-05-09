@@ -114,6 +114,7 @@ export class BotEngine {
     this.emergencyBrakeTriggered = false;
 
     console.log(`[Bot] Starting in ${mode} mode`);
+    await this.logStartupStatus(mode);
     await updateBotConfig({
       isRunning: 1,
       isPaused: 0,
@@ -270,6 +271,23 @@ export class BotEngine {
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────
+
+  private async logStartupStatus(mode: string): Promise<void> {
+    try {
+      const portfolio = await getExchangePortfolioState(new Date());
+      console.log(
+        `[Bot] Startup status mode=${mode} bankrollUsd=${portfolio.snapshot.bankrollUsd.toFixed(
+          2
+        )} maxPositionUsd=${ENV.maxPositionUsd.toFixed(2)}`
+      );
+    } catch (error) {
+      console.warn(
+        `[Bot] Startup status mode=${mode} bankrollUsd=unavailable maxPositionUsd=${ENV.maxPositionUsd.toFixed(
+          2
+        )} reason=${String(error)}`
+      );
+    }
+  }
 
   private async evaluateVelocityExitOpportunities(
     now = new Date()
