@@ -68,7 +68,7 @@ export class BotEngine {
 
     this.orchestrator = new AgentOrchestrator({
       marketProvider: {
-        scan: async (now) =>
+        scan: async now =>
           (
             await scanTradableMarkets(
               {
@@ -98,9 +98,14 @@ export class BotEngine {
     this.isPaused = false;
     this.emergencyBrakeTriggered = false;
 
-    const mode = process.env.EXECUTION_MODE ?? (ENV.liveTradingEnabled ? "live" : "paper");
+    const mode =
+      process.env.EXECUTION_MODE ?? (ENV.liveTradingEnabled ? "live" : "paper");
     console.log(`[Bot] Starting in ${mode} mode`);
-    await updateBotConfig({ isRunning: 1, isPaused: 0, emergencyBrakeTriggered: 0 });
+    await updateBotConfig({
+      isRunning: 1,
+      isPaused: 0,
+      emergencyBrakeTriggered: 0,
+    });
 
     this.tickInterval = setInterval(() => {
       this.tick().catch(err => console.error("[Bot] Tick error:", err));
@@ -119,8 +124,14 @@ export class BotEngine {
     if (!this.isRunning) return;
 
     this.isRunning = false;
-    if (this.tickInterval) { clearInterval(this.tickInterval); this.tickInterval = null; }
-    if (this.lifecycleInterval) { clearInterval(this.lifecycleInterval); this.lifecycleInterval = null; }
+    if (this.tickInterval) {
+      clearInterval(this.tickInterval);
+      this.tickInterval = null;
+    }
+    if (this.lifecycleInterval) {
+      clearInterval(this.lifecycleInterval);
+      this.lifecycleInterval = null;
+    }
 
     await this.cancelAllOpenOrders("stop");
     await updateBotConfig({ isRunning: 0 });
@@ -145,14 +156,17 @@ export class BotEngine {
       isRunning: this.isRunning,
       isPaused: this.isPaused,
       emergencyBrakeTriggered: this.emergencyBrakeTriggered,
-      executionMode: process.env.EXECUTION_MODE ?? (ENV.liveTradingEnabled ? "live" : "paper"),
+      executionMode:
+        process.env.EXECUTION_MODE ??
+        (ENV.liveTradingEnabled ? "live" : "paper"),
     };
   }
 
   // ─── Main trading tick ────────────────────────────────────────────────────
 
   private async tick(): Promise<void> {
-    if (this.isPaused || this.emergencyBrakeTriggered || !this.orchestrator) return;
+    if (this.isPaused || this.emergencyBrakeTriggered || !this.orchestrator)
+      return;
 
     try {
       const result = await this.orchestrator.tick();
@@ -184,7 +198,9 @@ export class BotEngine {
             status: "cancelled",
             lifecycleState: "CANCEL_CONFIRMED",
           });
-          console.log(`[Bot] Cancelled stale order ${order.nonce} (age ${Math.round(age / 1000)}s)`);
+          console.log(
+            `[Bot] Cancelled stale order ${order.nonce} (age ${Math.round(age / 1000)}s)`
+          );
         } catch (err) {
           console.warn(`[Bot] Failed to cancel order ${order.nonce}:`, err);
         }
@@ -208,7 +224,11 @@ export class BotEngine {
             orderbookUpdatedAt: now,
           } as import("./agent/types").AgentMarket;
 
-          const update = await this.executionAdapter.sync(order.nonce, dummyMarket, now);
+          const update = await this.executionAdapter.sync(
+            order.nonce,
+            dummyMarket,
+            now
+          );
 
           const newStatus =
             update.status === "filled"
@@ -247,14 +267,21 @@ export class BotEngine {
           lifecycleState: "CANCEL_CONFIRMED",
         });
       } catch (err) {
-        console.warn(`[Bot] Cancel failed (${reason}) for ${order.nonce}:`, err);
+        console.warn(
+          `[Bot] Cancel failed (${reason}) for ${order.nonce}:`,
+          err
+        );
       }
     }
   }
 
   private async triggerEmergencyBrake(drawdownPct: number): Promise<void> {
     this.emergencyBrakeTriggered = true;
-    console.error("[Bot] EMERGENCY BRAKE — drawdown", drawdownPct.toFixed(2), "%");
+    console.error(
+      "[Bot] EMERGENCY BRAKE — drawdown",
+      drawdownPct.toFixed(2),
+      "%"
+    );
 
     // Gap 9: disarm killswitch, which cancels all open GTC orders.
     const { PolymarketAdapter } = await import("./exchange/polymarket/index");
@@ -281,7 +308,8 @@ export class BotEngine {
     const latest = await getLatestEquitySnapshot();
     const balance = latest ? Number(latest.balance) : 0;
     const peakBalance = latest ? Number(latest.peakBalance) : balance;
-    const drawdown = peakBalance > 0 ? ((peakBalance - balance) / peakBalance) * 100 : 0;
+    const drawdown =
+      peakBalance > 0 ? ((peakBalance - balance) / peakBalance) * 100 : 0;
 
     await insertEquitySnapshot({
       balance: balance.toString(),
@@ -290,7 +318,8 @@ export class BotEngine {
       totalExposure: "0",
     });
 
-    const maxDrawdown = this.config.riskLimits?.maxDrawdownPct ?? ENV.maxDrawdownPct;
+    const maxDrawdown =
+      this.config.riskLimits?.maxDrawdownPct ?? ENV.maxDrawdownPct;
     if (drawdown >= maxDrawdown && !this.emergencyBrakeTriggered) {
       await this.triggerEmergencyBrake(drawdown);
     }

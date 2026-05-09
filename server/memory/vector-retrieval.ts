@@ -138,7 +138,9 @@ export class DbVectorMemoryStore implements VectorMemoryStore {
         : sql`SELECT * FROM vector_memory`
     );
 
-    const rawRows = (Array.isArray(rows) ? rows[0] : rows) as unknown as VectorMemoryRow[];
+    const rawRows = (Array.isArray(rows)
+      ? rows[0]
+      : rows) as unknown as VectorMemoryRow[];
 
     return rawRows
       .map(row => {

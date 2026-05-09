@@ -76,16 +76,27 @@ export class OrderbookWebSocketManager {
       }
     };
 
-    this.ws.onerror = () => { /* logged via onclose */ };
+    this.ws.onerror = () => {
+      /* logged via onclose */
+    };
     this.ws.onclose = () => {
       if (!this.closed) this.scheduleReconnect();
     };
   }
 
   private subscribe(tokenIds: string[]): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || tokenIds.length === 0) return;
+    if (
+      !this.ws ||
+      this.ws.readyState !== WebSocket.OPEN ||
+      tokenIds.length === 0
+    )
+      return;
     this.ws.send(
-      JSON.stringify({ type: "subscribe", channel: "book", market_token_ids: tokenIds })
+      JSON.stringify({
+        type: "subscribe",
+        channel: "book",
+        market_token_ids: tokenIds,
+      })
     );
   }
 
@@ -379,7 +390,9 @@ export async function scanPolymarketCandidates(
     );
 
   const candidates: AgentMarket[] = [];
-  const allTokenIds = normalizedGamma.flatMap(m => parseJsonArray(m.clobTokenIds));
+  const allTokenIds = normalizedGamma.flatMap(m =>
+    parseJsonArray(m.clobTokenIds)
+  );
   orderbookWsManager.connect(allTokenIds);
 
   for (const market of normalizedGamma) {
@@ -387,7 +400,7 @@ export async function scanPolymarketCandidates(
     if (!yesTokenId) continue;
 
     const cachedBook = orderbookWsManager.getBook(yesTokenId);
-    const book = cachedBook ?? await fetchClobOrderBook(yesTokenId, options);
+    const book = cachedBook ?? (await fetchClobOrderBook(yesTokenId, options));
     const agentMarket = normalizeAgentMarket(market, book, fetchedAt);
     if (agentMarket) candidates.push(agentMarket);
   }

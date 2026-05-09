@@ -267,7 +267,8 @@ import { PaperExecutionAdapter } from "../../agent/paper-execution";
 import type { ExecutionAdapter as IExecutionAdapter } from "../../agent/execution-adapter";
 
 export async function createExecutionAdapter(): Promise<IExecutionAdapter> {
-  const mode = process.env.EXECUTION_MODE ?? (ENV.liveTradingEnabled ? "live" : "paper");
+  const mode =
+    process.env.EXECUTION_MODE ?? (ENV.liveTradingEnabled ? "live" : "paper");
 
   if (mode === "live") {
     const readiness = getPolymarketLiveReadiness();

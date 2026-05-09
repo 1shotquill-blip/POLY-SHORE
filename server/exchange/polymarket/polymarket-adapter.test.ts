@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentMarket, TradeIntent } from "../../agent/types";
+import { ensureTradingAllowances } from "./allowances";
 import { KillswitchBlocked } from "./errors";
 import { PolymarketAdapter } from "./index";
 import { PolymarketKillswitch } from "./killswitch";
@@ -197,5 +198,43 @@ describe("PolymarketAdapter", () => {
       originalSizeUsd: 6,
       matchedSizeUsd: 1.5,
     });
+  });
+
+  it("uses the SDK's allowance parameter shape", async () => {
+    const allowanceCalls: unknown[] = [];
+    let collateralAllowance = 0;
+    let conditionalAllowance = 0;
+    const client: PolymarketClientLike = {
+      async getBalanceAllowance(params) {
+        allowanceCalls.push(["get", params]);
+        const value = params as { asset_type?: string; token_id?: string };
+        const allowance =
+          value.asset_type === "CONDITIONAL"
+            ? conditionalAllowance
+            : collateralAllowance;
+        return { allowance: String(allowance) };
+      },
+      async updateBalanceAllowance(params) {
+        allowanceCalls.push(["update", params]);
+        const value = params as { asset_type?: string; token_id?: string };
+        if (value.asset_type === "CONDITIONAL") {
+          conditionalAllowance = 100;
+        } else {
+          collateralAllowance = 100;
+        }
+        return { success: true };
+      },
+    };
+
+    await ensureTradingAllowances(client, 25, "yes-token");
+
+    expect(allowanceCalls).toEqual([
+      ["get", { asset_type: "COLLATERAL" }],
+      ["update", { asset_type: "COLLATERAL" }],
+      ["get", { asset_type: "COLLATERAL" }],
+      ["get", { asset_type: "CONDITIONAL", token_id: "yes-token" }],
+      ["update", { asset_type: "CONDITIONAL", token_id: "yes-token" }],
+      ["get", { asset_type: "CONDITIONAL", token_id: "yes-token" }],
+    ]);
   });
 });

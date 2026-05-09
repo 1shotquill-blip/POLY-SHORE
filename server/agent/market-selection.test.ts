@@ -61,28 +61,45 @@ const risk: RiskDecision = {
 
 describe("computeTimeRemainingScore", () => {
   it("returns 0 for expired markets", () => {
-    expect(computeTimeRemainingScore(new Date("2025-12-31T00:00:00Z"), NOW)).toBe(0);
+    expect(
+      computeTimeRemainingScore(new Date("2025-12-31T00:00:00Z"), NOW)
+    ).toBe(0);
   });
 
   it("ramps up for markets resolving in < 6h", () => {
-    expect(computeTimeRemainingScore(new Date("2026-01-01T03:00:00Z"), NOW)).toBeCloseTo(0.5);
+    expect(
+      computeTimeRemainingScore(new Date("2026-01-01T03:00:00Z"), NOW)
+    ).toBeCloseTo(0.5);
   });
 
   it("scores 1 for markets in the 6–72h sweet spot", () => {
-    expect(computeTimeRemainingScore(new Date("2026-01-02T00:00:00Z"), NOW)).toBe(1); // 24h
-    expect(computeTimeRemainingScore(new Date("2026-01-03T00:00:00Z"), NOW)).toBe(1); // 48h
-    expect(computeTimeRemainingScore(new Date("2026-01-04T00:00:00Z"), NOW)).toBe(1); // 72h
+    expect(
+      computeTimeRemainingScore(new Date("2026-01-02T00:00:00Z"), NOW)
+    ).toBe(1); // 24h
+    expect(
+      computeTimeRemainingScore(new Date("2026-01-03T00:00:00Z"), NOW)
+    ).toBe(1); // 48h
+    expect(
+      computeTimeRemainingScore(new Date("2026-01-04T00:00:00Z"), NOW)
+    ).toBe(1); // 72h
   });
 
   it("decays to 0 between 72h and 7d", () => {
-    const score96h = computeTimeRemainingScore(new Date("2026-01-05T00:00:00Z"), NOW); // 96h
+    const score96h = computeTimeRemainingScore(
+      new Date("2026-01-05T00:00:00Z"),
+      NOW
+    ); // 96h
     expect(score96h).toBeGreaterThan(0);
     expect(score96h).toBeLessThan(1);
   });
 
   it("returns 0 at or beyond 7 days", () => {
-    expect(computeTimeRemainingScore(new Date("2026-01-08T00:00:00Z"), NOW)).toBe(0);
-    expect(computeTimeRemainingScore(new Date("2026-02-01T00:00:00Z"), NOW)).toBe(0);
+    expect(
+      computeTimeRemainingScore(new Date("2026-01-08T00:00:00Z"), NOW)
+    ).toBe(0);
+    expect(
+      computeTimeRemainingScore(new Date("2026-02-01T00:00:00Z"), NOW)
+    ).toBe(0);
   });
 });
 
@@ -145,15 +162,25 @@ describe("passesLiquidityGate", () => {
   });
 
   it("fails when bid depth is below $500", () => {
-    expect(passesLiquidityGate({ ...market, topOfBookDepthBid: 400 })).toBe(false);
+    expect(passesLiquidityGate({ ...market, topOfBookDepthBid: 400 })).toBe(
+      false
+    );
   });
 
   it("fails when ask depth is below $500", () => {
-    expect(passesLiquidityGate({ ...market, topOfBookDepthAsk: 200 })).toBe(false);
+    expect(passesLiquidityGate({ ...market, topOfBookDepthAsk: 200 })).toBe(
+      false
+    );
   });
 
   it("fails when both sides are zero", () => {
-    expect(passesLiquidityGate({ ...market, topOfBookDepthBid: 0, topOfBookDepthAsk: 0 })).toBe(false);
+    expect(
+      passesLiquidityGate({
+        ...market,
+        topOfBookDepthBid: 0,
+        topOfBookDepthAsk: 0,
+      })
+    ).toBe(false);
   });
 
   it(`MIN_TOP_OF_BOOK_USD is $${MIN_TOP_OF_BOOK_USD}`, () => {
@@ -165,13 +192,13 @@ describe("passesLiquidityGate", () => {
 
 describe("computeConsensusDivergenceScore", () => {
   it("returns 1 when LLM diverges >= 15% from market", () => {
-    expect(computeConsensusDivergenceScore(0.70, 0.50)).toBe(1); // 20% gap
+    expect(computeConsensusDivergenceScore(0.7, 0.5)).toBe(1); // 20% gap
     expect(computeConsensusDivergenceScore(0.35, 0.51)).toBeCloseTo(1); // 16% gap
   });
 
   it("returns proportional score for smaller gaps", () => {
     // 7.5% gap → 0.5
-    expect(computeConsensusDivergenceScore(0.575, 0.50)).toBeCloseTo(0.5, 1);
+    expect(computeConsensusDivergenceScore(0.575, 0.5)).toBeCloseTo(0.5, 1);
   });
 
   it("returns 0 when LLM agrees with market", () => {
@@ -187,14 +214,21 @@ describe("computeConsensusDivergenceScore", () => {
 
 describe("scoreOpportunity", () => {
   it("zeroes total when liquidity gate fails", () => {
-    const illiquid = { ...market, topOfBookDepthBid: 100, topOfBookDepthAsk: 100 };
+    const illiquid = {
+      ...market,
+      topOfBookDepthBid: 100,
+      topOfBookDepthAsk: 100,
+    };
     const score = scoreOpportunity(illiquid, risk, undefined, NOW);
     expect(score.total).toBe(0);
     expect(score.passedLiquidityGate).toBe(false);
   });
 
   it("applies recency penalty to total", () => {
-    const stale = { ...market, orderbookUpdatedAt: new Date(NOW.getTime() - 30 * 3_600_000) };
+    const stale = {
+      ...market,
+      orderbookUpdatedAt: new Date(NOW.getTime() - 30 * 3_600_000),
+    };
     const fresh = { ...market };
     const staleScore = scoreOpportunity(stale, risk, undefined, NOW);
     const freshScore = scoreOpportunity(fresh, risk, undefined, NOW);
@@ -206,14 +240,20 @@ describe("scoreOpportunity", () => {
     const ensemble = {
       marketId: "market-1",
       outcome: "yes" as const,
-      estimatedProbability: 0.70, // 19% above midpoint 0.51
+      estimatedProbability: 0.7, // 19% above midpoint 0.51
       confidence: 0.85,
       estimates: [],
       modelDisagreement: 0,
       evidenceSummary: [],
       generatedAt: NOW,
     };
-    const withDivergence = scoreOpportunity(market, risk, undefined, NOW, ensemble);
+    const withDivergence = scoreOpportunity(
+      market,
+      risk,
+      undefined,
+      NOW,
+      ensemble
+    );
     const withoutDivergence = scoreOpportunity(market, risk, undefined, NOW);
     expect(withDivergence.consensusDivergenceScore).toBe(1);
     expect(withDivergence.total).toBeGreaterThan(withoutDivergence.total);

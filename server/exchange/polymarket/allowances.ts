@@ -11,6 +11,12 @@ export interface AllowanceTarget {
   minimumAllowance: number;
 }
 
+interface PolymarketAllowanceParams {
+  asset_type: "COLLATERAL" | "CONDITIONAL";
+  token_id?: string;
+  [key: string]: unknown;
+}
+
 function parseAllowance(raw: unknown): number {
   if (typeof raw === "number") return raw;
   if (typeof raw === "string") return Number(raw);
@@ -34,10 +40,10 @@ export async function ensureAllowance(
   }
 
   try {
-    const params = {
-      assetType: target.token,
-      tokenId: target.tokenId,
-    };
+    const params: PolymarketAllowanceParams =
+      target.token === "collateral"
+        ? { asset_type: "COLLATERAL" }
+        : { asset_type: "CONDITIONAL", token_id: target.tokenId };
     const current = parseAllowance(await client.getBalanceAllowance(params));
     if (current >= target.minimumAllowance) return;
     await client.updateBalanceAllowance(params);

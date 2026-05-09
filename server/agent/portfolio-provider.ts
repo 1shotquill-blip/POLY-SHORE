@@ -34,8 +34,9 @@ export class ClobPortfolioProvider implements PortfolioProvider {
     const dailyPnlUsd = 0;
 
     // Reconciliation: if we have no DB connection data is unknown.
-    const reconciliationStatus: "ok" | "mismatch" | "unknown" =
-      latestEquity ? "ok" : "unknown";
+    const reconciliationStatus: "ok" | "mismatch" | "unknown" = latestEquity
+      ? "ok"
+      : "unknown";
 
     return {
       bankrollUsd,

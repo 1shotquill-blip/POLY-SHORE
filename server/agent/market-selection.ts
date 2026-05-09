@@ -10,11 +10,11 @@ export interface MarketSelectionWeights {
 }
 
 export const DEFAULT_MARKET_SELECTION_WEIGHTS: MarketSelectionWeights = {
-  edge: 0.30,
+  edge: 0.3,
   confidence: 0.25,
-  liquidity: 0.10,
-  timeRemaining: 0.10,
-  volumeVelocity: 0.10,
+  liquidity: 0.1,
+  timeRemaining: 0.1,
+  volumeVelocity: 0.1,
   consensusDivergence: 0.15,
 };
 
@@ -50,8 +50,8 @@ export function computeTimeRemainingScore(
 ): number {
   const hoursRemaining = (expiresAt.getTime() - now.getTime()) / 3_600_000;
   if (hoursRemaining <= 0) return 0;
-  if (hoursRemaining < 6) return hoursRemaining / 6;          // ramp up 0→1 over first 6h
-  if (hoursRemaining <= 72) return 1;                          // sweet spot: 6h – 72h
+  if (hoursRemaining < 6) return hoursRemaining / 6; // ramp up 0→1 over first 6h
+  if (hoursRemaining <= 72) return 1; // sweet spot: 6h – 72h
   if (hoursRemaining <= 168) return 1 - (hoursRemaining - 72) / (168 - 72); // decay to 0 at 7d
   return 0;
 }
@@ -77,9 +77,9 @@ export function computeRecencyPenalty(
 ): number {
   const reference = lastPriceMovedAt ?? orderbookUpdatedAt;
   const staleness = (now.getTime() - reference.getTime()) / 3_600_000;
-  if (staleness < 6) return 1;          // fresh — no penalty
-  if (staleness >= 24) return 0.4;      // very stale — 60% discount
-  return clamp01(1 - (staleness - 6) / (24 - 6) * 0.6);
+  if (staleness < 6) return 1; // fresh — no penalty
+  if (staleness >= 24) return 0.4; // very stale — 60% discount
+  return clamp01(1 - ((staleness - 6) / (24 - 6)) * 0.6);
 }
 
 // Signal 4: minimum top-of-book depth gate.
