@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { notifyOwner } from "./notification";
 import { adminProcedure, publicProcedure, router } from "./trpc";
+import { collectOperationalHealthSnapshot } from "../monitoring/operational-health";
 
 export const systemRouter = router({
   health: publicProcedure
@@ -9,9 +10,15 @@ export const systemRouter = router({
         timestamp: z.number().min(0, "timestamp cannot be negative"),
       })
     )
-    .query(() => ({
-      ok: true,
-    })),
+    .query(async ({ input }) => {
+      const snapshot = await collectOperationalHealthSnapshot(
+        new Date(input.timestamp)
+      );
+      return {
+        ok: snapshot.ok,
+        snapshot,
+      } as const;
+    }),
 
   notifyOwner: adminProcedure
     .input(
