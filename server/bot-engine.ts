@@ -1,8 +1,10 @@
 import {
   updateBotConfig,
   insertEquitySnapshot,
-  getLatestEquitySnapshot,
   getOpenOrders,
+  getExchangePortfolioState,
+  getMarketByMarketId,
+  getTradesByMarketId,
 } from "./db";
 import { updateOrderSyncState } from "./db";
 import { notifyOwner } from "./_core/notification";
@@ -13,6 +15,10 @@ import { ProductionDeepEdgeGate } from "./agent/deep-edge-gate";
 import { ClobPortfolioProvider } from "./agent/portfolio-provider";
 import { scanTradableMarkets } from "./agent/market-scanner";
 import { recoverOpenOrders } from "./agent/startup-recovery";
+import {
+  buildVelocityExitCandidate,
+  submitVelocityExitOrder,
+} from "./agent/velocity-exit";
 import { createExecutionAdapter } from "./exchange/polymarket/index";
 import { DEFAULT_RISK_LIMITS } from "./agent/risk-manager";
 import type { ExecutionAdapter } from "./agent/execution-adapter";
@@ -61,6 +67,13 @@ export class BotEngine {
       return;
     }
 
+    const mode =
+      process.env.EXECUTION_MODE ?? (ENV.liveTradingEnabled ? "live" : "paper");
+    if (mode === "backtest") {
+      await this.runBacktestMode();
+      return;
+    }
+
     this.executionAdapter = await createExecutionAdapter();
     await this.recoverExecutionState();
 
@@ -100,8 +113,6 @@ export class BotEngine {
     this.isPaused = false;
     this.emergencyBrakeTriggered = false;
 
-    const mode =
-      process.env.EXECUTION_MODE ?? (ENV.liveTradingEnabled ? "live" : "paper");
     console.log(`[Bot] Starting in ${mode} mode`);
     await updateBotConfig({
       isRunning: 1,
@@ -254,9 +265,102 @@ export class BotEngine {
         }
       }
     }
+
+    await this.evaluateVelocityExitOpportunities(now);
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────
+
+  private async evaluateVelocityExitOpportunities(
+    now = new Date()
+  ): Promise<void> {
+    if (!this.executionAdapter) return;
+
+    const portfolio = await getExchangePortfolioState(now);
+    if (
+      portfolio.snapshot.reconciliationStatus !== "ok" ||
+      !portfolio.exchange
+    ) {
+      return;
+    }
+
+    const openOrders = await getOpenOrders();
+    const openSellMarkets = new Set(
+      openOrders
+        .filter(order => order.side === "sell")
+        .map(order => order.marketId)
+    );
+
+    for (const position of portfolio.exchange.positions) {
+      if (position.currentValueUsd <= 0) continue;
+      if (openSellMarkets.has(position.marketId)) continue;
+
+      const marketRow = await getMarketByMarketId(position.marketId);
+      if (!marketRow?.bestBid || !marketRow.expiresAt) continue;
+
+      const market = {
+        marketId: marketRow.marketId,
+        question: marketRow.question,
+        yesTokenId: position.tokenId,
+        noTokenId: "",
+        bestBid: Number(marketRow.bestBid),
+        bestAsk: Number(marketRow.bestAsk ?? marketRow.bestBid),
+        spread: Number(marketRow.spread ?? 0),
+        midpoint:
+          Number(marketRow.bestBid ?? 0) +
+          (Number(marketRow.bestAsk ?? marketRow.bestBid) -
+            Number(marketRow.bestBid ?? 0)) /
+            2,
+        volume24h: Number(marketRow.volume24h ?? 0),
+        liquidity: Number(marketRow.volume24h ?? 0),
+        expiresAt: new Date(marketRow.expiresAt ?? now),
+        orderbookUpdatedAt: new Date(
+          marketRow.lastUpdatedAt ?? marketRow.createdAt ?? now
+        ),
+        category: marketRow.category ?? undefined,
+      } as import("./agent/types").AgentMarket;
+
+      const tradeHistory = await getTradesByMarketId(
+        position.marketId,
+        position.tokenId,
+        50
+      );
+      const candidate = buildVelocityExitCandidate({
+        market,
+        position,
+        trades: tradeHistory
+          .slice()
+          .reverse()
+          .map(trade => ({
+            side: trade.side,
+            price: Number(trade.price),
+            size: Number(trade.size),
+          })),
+        now,
+      });
+
+      if (!candidate) continue;
+
+      try {
+        const receipt = await submitVelocityExitOrder(
+          this.executionAdapter,
+          candidate,
+          now
+        );
+        if (receipt.status === "exchange_accepted") {
+          console.log(
+            `[Bot] Velocity exit submitted for ${position.marketId} at bid ${candidate.market.bestBid.toFixed(4)}`
+          );
+        }
+        return;
+      } catch (err) {
+        console.warn(
+          `[Bot] Velocity exit failed for ${position.marketId}:`,
+          err
+        );
+      }
+    }
+  }
 
   private async cancelAllOpenOrders(reason: string): Promise<void> {
     if (!this.executionAdapter) return;
@@ -334,17 +438,19 @@ export class BotEngine {
   }
 
   private async updateEquitySnapshot(): Promise<void> {
-    const latest = await getLatestEquitySnapshot();
-    const balance = latest ? Number(latest.balance) : 0;
-    const peakBalance = latest ? Number(latest.peakBalance) : balance;
+    const portfolio = await getExchangePortfolioState(new Date());
+    const balance = portfolio.snapshot.bankrollUsd;
+    const peakBalance = portfolio.snapshot.peakBankrollUsd;
     const drawdown =
       peakBalance > 0 ? ((peakBalance - balance) / peakBalance) * 100 : 0;
+    const totalExposure =
+      balance > 0 ? (portfolio.snapshot.openExposureUsd / balance) * 100 : 0;
 
     await insertEquitySnapshot({
       balance: balance.toString(),
       peakBalance: Math.max(balance, peakBalance).toString(),
       drawdown: drawdown.toString(),
-      totalExposure: "0",
+      totalExposure: totalExposure.toString(),
     });
 
     const maxDrawdown =
@@ -352,5 +458,27 @@ export class BotEngine {
     if (drawdown >= maxDrawdown && !this.emergencyBrakeTriggered) {
       await this.triggerEmergencyBrake(drawdown);
     }
+  }
+
+  private async runBacktestMode(): Promise<void> {
+    const dataPath = process.env.BACKTEST_DATA_PATH;
+    if (!dataPath) {
+      throw new Error(
+        "BACKTEST_DATA_PATH is required when EXECUTION_MODE=backtest"
+      );
+    }
+
+    const { BacktestingEngine, loadHistoricalFramesFromFile } = await import(
+      "./backtesting/engine"
+    );
+    const { generateBacktestReport } = await import("./backtesting/reporter");
+    const frames = await loadHistoricalFramesFromFile(dataPath);
+    const engine = new BacktestingEngine();
+    const result = await engine.run(frames);
+    const report = generateBacktestReport(result);
+
+    console.log(
+      `[Backtest] frames=${result.framesProcessed} trades=${report.summary.trades} pnl=${report.summary.realizedPnlUsd.toFixed(2)} maxDD=${report.maxDrawdownPct.toFixed(2)}%`
+    );
   }
 }

@@ -53,6 +53,17 @@ export function computeDrawdownPct(
   return Math.max(0, ((peakBankrollUsd - bankrollUsd) / peakBankrollUsd) * 100);
 }
 
+export function computeResolutionSpeedMultiplier(
+  expiresAt: Date,
+  now = new Date()
+): number {
+  const hoursToExpiry = (expiresAt.getTime() - now.getTime()) / 3_600_000;
+  if (hoursToExpiry <= 0) return 0;
+  if (hoursToExpiry <= 24) return 2.5;
+  if (hoursToExpiry >= 72) return 1;
+  return 1 + ((72 - hoursToExpiry) / (72 - 24)) * 1.5;
+}
+
 export function classifyMarketData(
   market: AgentMarket,
   limits: RiskLimits,
@@ -127,6 +138,11 @@ export function evaluateRisk(
   const confidenceAdjustedKelly =
     rawKelly * ensemble.confidence * limits.fractionalKelly;
   const kellySizeUsd = portfolio.bankrollUsd * confidenceAdjustedKelly;
+  const resolutionSpeedMultiplier = computeResolutionSpeedMultiplier(
+    market.expiresAt,
+    now
+  );
+  const timeWeightedKellyUsd = kellySizeUsd * resolutionSpeedMultiplier;
   const singleMarketCapUsd =
     portfolio.bankrollUsd * (limits.maxSingleMarketExposurePct / 100);
   const categoryCapUsd =
@@ -137,7 +153,7 @@ export function evaluateRisk(
     market.liquidity * (limits.liquidityParticipationLimitPct / 100);
   const executionProfile = computeExecutionMicrostructureProfile(market, now);
   const executionAdjustedKellyUsd =
-    kellySizeUsd * executionProfile.sizeMultiplier;
+    timeWeightedKellyUsd * executionProfile.sizeMultiplier;
 
   const currentMarketExposure =
     portfolio.marketExposureUsd[market.marketId] ?? 0;
@@ -197,6 +213,7 @@ export function evaluateRisk(
       drawdownPct,
       marketDataStatus,
       executionMultiplier: executionProfile.sizeMultiplier,
+      resolutionSpeedMultiplier,
     },
   };
 }

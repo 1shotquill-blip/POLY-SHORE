@@ -106,6 +106,7 @@ export interface RiskDecision {
     drawdownPct: number;
     marketDataStatus: MarketDataStatus;
     executionMultiplier?: number;
+    resolutionSpeedMultiplier?: number;
   };
 }
 

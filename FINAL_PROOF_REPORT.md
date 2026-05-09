@@ -2,7 +2,7 @@
 
 ## Current Status
 
-The production-path implementation changes in this directive are complete and verified. Live trading now has a fail-closed Polymarket CLOB v2 adapter, a canonical CLOB reference-price helper, startup recovery for live order rehydration, and a replay-backed operational health snapshot. Live execution remains disabled by default unless credentials, allowances, and the kill switch are explicitly configured.
+The production-path implementation changes in this directive are complete and verified. Live trading now has a fail-closed Polymarket CLOB v2 adapter, a canonical CLOB reference-price helper, startup recovery for live order rehydration, a replay-backed operational health snapshot, and a fast-play velocity exit path that can recycle capital when price moves in favor. Live execution remains disabled by default unless credentials, allowances, and the kill switch are explicitly configured.
 
 ## Initial Repo Snapshot
 
@@ -24,9 +24,9 @@ The production-path implementation changes in this directive are complete and ve
 - Install: `pnpm install --no-frozen-lockfile` passed after network approval and updated `pnpm-lock.yaml` for `@polymarket/clob-client-v2` and `viem`. The first sandboxed install attempt failed with `ENOTFOUND registry.npmjs.org`.
 - Lint/static gate: `pnpm lint` passed.
 - Typecheck: `pnpm check` passed.
-- Tests: `pnpm test` passed with 27 test files and 109 tests.
+- Tests: `pnpm test` passed with 32 test files and 119 tests.
 - Build: `pnpm build` passed and produced `dist/index.js`. Vite reports only large-chunk warnings.
-- Runtime smoke: `PORT=53123 NODE_ENV=production node dist/index.js` started the production server under approval, and `curl -I http://localhost:53123/` returned HTTP 200. The smoke-test server was stopped afterward.
+- Runtime smoke: `PORT=56550 NODE_ENV=production node dist/index.js` started the production server under approval, and `curl -I http://127.0.0.1:56550/` returned HTTP 200. The smoke-test server was stopped afterward.
 - Proof artifacts: required proof files and `dist/index.js` are non-empty.
 - Server stub audit: `rg -n "TODO|stubbed|placeholder|demo|fake|NotImplemented" server --glob '!*.test.ts'` returned no matches.
 
@@ -52,6 +52,7 @@ The production-path implementation changes in this directive are complete and ve
 - Added `server/agent/book-pricing.ts` to make the live book reference price explicit and shared across intelligence, gating, and execution microstructure.
 - Added startup recovery for live order rehydration so surviving open orders are re-tracked, stale orders are cancelled, and missing exchange IDs fail closed on restart.
 - Added replay-backed operational health and shadow-decision summaries so the bot can expose a real operator snapshot instead of a boolean ping.
+- Added a fast-play velocity exit path that computes average entry from trade history and submits a sell when the market has already repriced enough to justify early profit capture.
 - Wired `server/execution.ts` live mode to the Polymarket adapter instead of hardcoded non-operational live responses.
 - Added `@polymarket/clob-client-v2` and `viem` dependencies with updated lockfile.
 - Added Polymarket adapter tests covering injected-client order placement, sync, cancel, kill-switch blocking, per-market cap, max-spread guard, and exchange-state normalization.
@@ -65,3 +66,4 @@ The production-path implementation changes in this directive are complete and ve
 - The lint script intentionally checks the production/proof implementation scope instead of reformatting unrelated historical files across the whole repository.
 - Live Polymarket execution will fail closed unless `POLYMARKET_PRIVATE_KEY`, L2 credentials or `POLYMARKET_CREDENTIAL_CACHE_KEY`, sufficient allowances, and `KILLSWITCH_ARMED=true` are present.
 - Wallet/funder values are intentionally blank in `.env.example`; those are the remaining operator inputs.
+- Fast-play exits only trigger when the live orderbook is fresh, the market has moved at least 20% above average entry, and no open sell order already exists on that market.

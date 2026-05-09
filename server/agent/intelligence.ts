@@ -1,4 +1,11 @@
 import { invokeLLM } from "../_core/llm";
+import {
+  buildCategoryCalibrationContext,
+  calibrateConfidence,
+  calibrateProbability,
+  describeCalibrationContext,
+  type CategoryCalibrationContext,
+} from "../intelligence/calibration";
 import { getClobReferencePrice } from "./book-pricing";
 import type {
   AgentMarket,
@@ -52,12 +59,6 @@ export class RuleBasedIntelligenceEngine implements IntelligenceEngine {
       evidenceSummary: rule.evidence,
       generatedAt: now,
     };
-  }
-}
-
-export class NoopIntelligenceEngine implements IntelligenceEngine {
-  async evaluate(): Promise<EnsembleDecision | null> {
-    return null;
   }
 }
 
@@ -153,7 +154,8 @@ async function extractFactors(
 
 async function estimateProbability(
   market: AgentMarket,
-  factors: string[]
+  factors: string[],
+  calibration?: CategoryCalibrationContext
 ): Promise<ProbabilityEstimationResult> {
   const result = await invokeLLM({
     messages: [
@@ -167,6 +169,9 @@ async function estimateProbability(
           "- Confidence is your certainty in the estimate: 0 = total uncertainty, 1 = near-certain.",
           "- Only set confidence ≥ 0.7 if evidence clearly supports a directional view.",
           "- Be calibrated: markets are often efficient; your edge must be well-supported.",
+          calibration
+            ? `- Bayesian anchor: ${describeCalibrationContext(calibration)}`
+            : "- Bayesian anchor: unavailable",
         ].join("\n"),
       },
       {
@@ -238,16 +243,27 @@ export class LLMIntelligenceEngine implements IntelligenceEngine {
       return null;
     }
 
+    let calibration: CategoryCalibrationContext | undefined;
+    try {
+      calibration = await buildCategoryCalibrationContext(market.category);
+    } catch {
+      calibration = undefined;
+    }
+
     let est: ProbabilityEstimationResult;
     try {
-      est = await estimateProbability(market, factors.factors);
+      est = await estimateProbability(market, factors.factors, calibration);
     } catch {
       return null;
     }
 
     const freshnessSeconds = (Date.now() - callStart) / 1000;
-    const probability = clamp(est.probability, 0.01, 0.99);
-    const confidence = clamp(est.confidence, 0, 1);
+    const probability = calibration
+      ? calibrateProbability(clamp(est.probability, 0.01, 0.99), calibration)
+      : clamp(est.probability, 0.01, 0.99);
+    const confidence = calibration
+      ? calibrateConfidence(clamp(est.confidence, 0, 1), calibration)
+      : clamp(est.confidence, 0, 1);
 
     // Normalise: if the LLM picked "no", flip to express as YES probability
     const estimatedProbability =

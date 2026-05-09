@@ -101,4 +101,43 @@ describe("production risk manager", () => {
       decision.reasons.some(reason => reason.startsWith("confidence"))
     ).toBe(true);
   });
+
+  it("sizes faster-resolving markets more aggressively", () => {
+    const fastMarket = {
+      ...freshMarket,
+      expiresAt: new Date(Date.now() + 12 * 3_600_000),
+    };
+    const slowMarket = {
+      ...freshMarket,
+      expiresAt: new Date(Date.now() + 72 * 3_600_000),
+    };
+
+    const relaxedLimits = {
+      ...DEFAULT_RISK_LIMITS,
+      maxSingleMarketExposurePct: 10,
+      maxCategoryExposurePct: 20,
+      maxTotalExposurePct: 20,
+      maxOrderSizeUsd: 1_000,
+    };
+
+    const fastDecision = evaluateRisk(
+      fastMarket,
+      ensemble,
+      cleanPortfolio,
+      relaxedLimits
+    );
+    const slowDecision = evaluateRisk(
+      slowMarket,
+      ensemble,
+      cleanPortfolio,
+      relaxedLimits
+    );
+
+    expect(fastDecision.intent?.sizeUsd ?? 0).toBeGreaterThan(
+      slowDecision.intent?.sizeUsd ?? 0
+    );
+    expect(fastDecision.diagnostics.resolutionSpeedMultiplier).toBeGreaterThan(
+      slowDecision.diagnostics.resolutionSpeedMultiplier ?? 0
+    );
+  });
 });

@@ -1,7 +1,26 @@
 import { eq, desc, and, gte, lte, lt, gt, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, markets, signals, orders, trades, equitySnapshots, botConfig, bayesianPriors, decisionAudits, InsertMarket, InsertSignal, InsertOrder, InsertTrade, InsertEquitySnapshot, InsertBotConfig, InsertBayesianPrior, InsertDecisionAudit } from "../drizzle/schema";
-import { ENV } from './_core/env';
+import {
+  InsertUser,
+  users,
+  markets,
+  signals,
+  orders,
+  trades,
+  equitySnapshots,
+  botConfig,
+  bayesianPriors,
+  decisionAudits,
+  InsertMarket,
+  InsertSignal,
+  InsertOrder,
+  InsertTrade,
+  InsertEquitySnapshot,
+  InsertBotConfig,
+  InsertBayesianPrior,
+  InsertDecisionAudit,
+} from "../drizzle/schema";
+import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -56,8 +75,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       values.role = user.role;
       updateSet.role = user.role;
     } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
+      values.role = "admin";
+      updateSet.role = "admin";
     }
 
     if (!values.lastSignedIn) {
@@ -84,7 +103,11 @@ export async function getUserByOpenId(openId: string) {
     return undefined;
   }
 
-  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.openId, openId))
+    .limit(1);
 
   return result.length > 0 ? result[0] : undefined;
 }
@@ -95,7 +118,11 @@ export async function getUserByOpenId(openId: string) {
 export async function getMarketByMarketId(marketId: string) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(markets).where(eq(markets.marketId, marketId)).limit(1);
+  const result = await db
+    .select()
+    .from(markets)
+    .where(eq(markets.marketId, marketId))
+    .limit(1);
   return result.length > 0 ? result[0] : undefined;
 }
 
@@ -141,14 +168,19 @@ export async function insertSignal(signal: InsertSignal) {
   await db.insert(signals).values(signal);
 }
 
-export async function getRecentSignals(marketId: string, minutesBack: number = 5) {
+export async function getRecentSignals(
+  marketId: string,
+  minutesBack: number = 5
+) {
   const db = await getDb();
   if (!db) return [];
   const cutoff = new Date(Date.now() - minutesBack * 60 * 1000);
   return db
     .select()
     .from(signals)
-    .where(and(eq(signals.marketId, marketId), gte(signals.collectedAt, cutoff)))
+    .where(
+      and(eq(signals.marketId, marketId), gte(signals.collectedAt, cutoff))
+    )
     .orderBy(desc(signals.collectedAt));
 }
 
@@ -164,14 +196,27 @@ export async function insertOrder(order: InsertOrder) {
 export async function getOrderByNonce(nonce: string) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(orders).where(eq(orders.nonce, nonce)).limit(1);
+  const result = await db
+    .select()
+    .from(orders)
+    .where(eq(orders.nonce, nonce))
+    .limit(1);
   return result.length > 0 ? result[0] : undefined;
 }
 
 export async function getOpenOrders() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(orders).where(inArray(orders.status, ["pending", "partially_filled", "cancel_requested"]));
+  return db
+    .select()
+    .from(orders)
+    .where(
+      inArray(orders.status, [
+        "pending",
+        "partially_filled",
+        "cancel_requested",
+      ])
+    );
 }
 
 export async function getReconcilableOrders() {
@@ -180,15 +225,26 @@ export async function getReconcilableOrders() {
   return getOpenOrders();
 }
 
-export async function updateOrderStatus(nonce: string, status: "partially_filled" | "filled" | "cancel_requested" | "cancelled" | "expired" | "rejected") {
+export async function updateOrderStatus(
+  nonce: string,
+  status:
+    | "partially_filled"
+    | "filled"
+    | "cancel_requested"
+    | "cancelled"
+    | "expired"
+    | "rejected"
+) {
   const db = await getDb();
   if (!db) return;
   const now = new Date();
   const updateData: Record<string, unknown> = { status };
-  if (status === "partially_filled") updateData.lifecycleState = "PARTIALLY_FILLED";
+  if (status === "partially_filled")
+    updateData.lifecycleState = "PARTIALLY_FILLED";
   if (status === "filled") updateData.filledAt = now;
   if (status === "filled") updateData.lifecycleState = "FILLED";
-  if (status === "cancel_requested") updateData.lifecycleState = "CANCEL_REQUESTED";
+  if (status === "cancel_requested")
+    updateData.lifecycleState = "CANCEL_REQUESTED";
   if (status === "cancelled") updateData.cancelledAt = now;
   if (status === "cancelled") updateData.lifecycleState = "CANCEL_CONFIRMED";
   if (status === "expired") updateData.lifecycleState = "EXPIRED";
@@ -196,7 +252,10 @@ export async function updateOrderStatus(nonce: string, status: "partially_filled
   await db.update(orders).set(updateData).where(eq(orders.nonce, nonce));
 }
 
-export async function markOrderAccepted(nonce: string, exchangeOrderId: string) {
+export async function markOrderAccepted(
+  nonce: string,
+  exchangeOrderId: string
+) {
   const db = await getDb();
   if (!db) return;
   await db
@@ -214,8 +273,26 @@ export async function updateOrderSyncState(
   nonce: string,
   updates: {
     matchedSize?: string;
-    status?: "pending" | "partially_filled" | "filled" | "cancel_requested" | "cancelled" | "expired" | "rejected";
-    lifecycleState?: "INTENT_CREATED" | "ORDER_SIGNED" | "ORDER_POSTED" | "ACCEPTED_BY_CLOB" | "PARTIALLY_FILLED" | "FILLED" | "CANCEL_REQUESTED" | "CANCEL_CONFIRMED" | "EXPIRED" | "REJECTED" | "RECONCILIATION_MISMATCH";
+    status?:
+      | "pending"
+      | "partially_filled"
+      | "filled"
+      | "cancel_requested"
+      | "cancelled"
+      | "expired"
+      | "rejected";
+    lifecycleState?:
+      | "INTENT_CREATED"
+      | "ORDER_SIGNED"
+      | "ORDER_POSTED"
+      | "ACCEPTED_BY_CLOB"
+      | "PARTIALLY_FILLED"
+      | "FILLED"
+      | "CANCEL_REQUESTED"
+      | "CANCEL_CONFIRMED"
+      | "EXPIRED"
+      | "REJECTED"
+      | "RECONCILIATION_MISMATCH";
     rejectionReason?: string | null;
   }
 ) {
@@ -242,7 +319,11 @@ export async function insertDecisionAudits(audits: InsertDecisionAudit[]) {
 export async function getRecentDecisionAudits(limit: number = 100) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(decisionAudits).orderBy(desc(decisionAudits.createdAt)).limit(limit);
+  return db
+    .select()
+    .from(decisionAudits)
+    .orderBy(desc(decisionAudits.createdAt))
+    .limit(limit);
 }
 
 /**
@@ -260,6 +341,27 @@ export async function getRecentTrades(limit: number = 20) {
   return db.select().from(trades).orderBy(desc(trades.filledAt)).limit(limit);
 }
 
+export async function getTradesByMarketId(
+  marketId: string,
+  tokenId?: string,
+  limit: number = 100
+) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [eq(trades.marketId, marketId)];
+  if (tokenId) {
+    conditions.push(eq(trades.tokenId, tokenId));
+  }
+
+  return db
+    .select()
+    .from(trades)
+    .where(and(...conditions))
+    .orderBy(desc(trades.filledAt))
+    .limit(limit);
+}
+
 /**
  * Equity Snapshots
  */
@@ -272,7 +374,11 @@ export async function insertEquitySnapshot(snapshot: InsertEquitySnapshot) {
 export async function getLatestEquitySnapshot() {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(equitySnapshots).orderBy(desc(equitySnapshots.timestamp)).limit(1);
+  const result = await db
+    .select()
+    .from(equitySnapshots)
+    .orderBy(desc(equitySnapshots.timestamp))
+    .limit(1);
   return result.length > 0 ? result[0] : undefined;
 }
 
@@ -285,6 +391,12 @@ export async function getEquityHistory(hoursBack: number = 24) {
     .from(equitySnapshots)
     .where(gte(equitySnapshots.timestamp, cutoff))
     .orderBy(equitySnapshots.timestamp);
+}
+
+export async function getExchangePortfolioState(now = new Date()) {
+  const { getExchangePortfolioState: resolveExchangePortfolioState } =
+    await import("./agent/portfolio-state");
+  return resolveExchangePortfolioState(now);
 }
 
 /**
@@ -318,7 +430,11 @@ export async function updateBotConfig(updates: Partial<InsertBotConfig>) {
 export async function getBayesianPrior(category: string) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(bayesianPriors).where(eq(bayesianPriors.category, category)).limit(1);
+  const result = await db
+    .select()
+    .from(bayesianPriors)
+    .where(eq(bayesianPriors.category, category))
+    .limit(1);
   return result.length > 0 ? result[0] : undefined;
 }
 

@@ -30,6 +30,7 @@ export interface ExchangeOpenOrderState {
   originalSizeUsd: number;
   matchedSizeUsd: number;
   status: string;
+  category?: string;
 }
 
 export interface ExchangePositionState {
@@ -123,6 +124,10 @@ export function buildPortfolioSnapshot(
     );
     marketExposureUsd[order.marketId] =
       (marketExposureUsd[order.marketId] ?? 0) + remainingUsd;
+    if (order.category) {
+      categoryExposureUsd[order.category] =
+        (categoryExposureUsd[order.category] ?? 0) + remainingUsd;
+    }
   }
 
   const openExposureUsd = Object.values(marketExposureUsd).reduce(
