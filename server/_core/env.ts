@@ -58,6 +58,8 @@ export const ENV = {
       process.env.POLYMARKET_MAX_SPREAD_BPS ??
       "500"
   ),
+  grokApiKey: process.env.GROK_API_KEY ?? "",
+  grokModel: process.env.GROK_MODEL ?? "grok-3",
   // ─── Runtime tuning (spec §3.2) ────────────────────────────────────────
   orderTtlMs: Number(process.env.ORDER_TTL_MS ?? "300000"),
   pollIntervalMs: Number(process.env.POLL_INTERVAL_MS ?? "15000"),
