@@ -1,17 +1,21 @@
-import type { AgentMarket, RiskDecision } from "./types";
+import type { AgentMarket, EnsembleDecision, RiskDecision } from "./types";
 
 export interface MarketSelectionWeights {
   edge: number;
   confidence: number;
   liquidity: number;
   timeRemaining: number;
+  volumeVelocity: number;
+  consensusDivergence: number;
 }
 
 export const DEFAULT_MARKET_SELECTION_WEIGHTS: MarketSelectionWeights = {
-  edge: 0.45,
-  confidence: 0.3,
-  liquidity: 0.15,
-  timeRemaining: 0.1,
+  edge: 0.30,
+  confidence: 0.25,
+  liquidity: 0.10,
+  timeRemaining: 0.10,
+  volumeVelocity: 0.10,
+  consensusDivergence: 0.15,
 };
 
 export interface MarketSelectionScore {
@@ -20,7 +24,14 @@ export interface MarketSelectionScore {
   confidenceScore: number;
   liquidityScore: number;
   timeRemainingScore: number;
+  volumeVelocityScore: number;
+  consensusDivergenceScore: number;
+  // gate results
+  passedLiquidityGate: boolean;
+  recencyPenalty: number;
 }
+
+// ─── Signal helpers ──────────────────────────────────────────────────────────
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -29,43 +40,119 @@ function clamp01(value: number): number {
 
 export function computeLiquidityScore(liquidityUsd: number): number {
   if (liquidityUsd <= 0) return 0;
-  // Saturates around $50k visible/declared liquidity.
   return clamp01(Math.log10(liquidityUsd + 1) / Math.log10(50_000 + 1));
 }
 
+// Signal 1: prefer 24–72 h window; penalise very short (<6h) and very long (>7d).
 export function computeTimeRemainingScore(
   expiresAt: Date,
   now = new Date()
 ): number {
   const hoursRemaining = (expiresAt.getTime() - now.getTime()) / 3_600_000;
   if (hoursRemaining <= 0) return 0;
-  // Favor markets with enough time for edge to materialize, but do not reward very long horizons indefinitely.
-  if (hoursRemaining < 6) return hoursRemaining / 6;
-  if (hoursRemaining <= 168) return 1;
-  return clamp01(1 - (hoursRemaining - 168) / 720);
+  if (hoursRemaining < 6) return hoursRemaining / 6;          // ramp up 0→1 over first 6h
+  if (hoursRemaining <= 72) return 1;                          // sweet spot: 6h – 72h
+  if (hoursRemaining <= 168) return 1 - (hoursRemaining - 72) / (168 - 72); // decay to 0 at 7d
+  return 0;
 }
+
+// Signal 2: volume velocity — ratio of 1h volume annualised vs 24h run rate.
+// >1 = accelerating, <1 = decelerating.
+export function computeVolumeVelocityScore(
+  volume24h: number,
+  volume1h?: number
+): number {
+  if (volume1h === undefined || volume24h <= 0) return 0.5; // neutral when data absent
+  const hourlyRunRate24h = volume24h / 24;
+  const velocity = volume1h / hourlyRunRate24h;
+  // clamp: 0 at 0.25x run rate, 1 at 3x run rate
+  return clamp01((velocity - 0.25) / (3 - 0.25));
+}
+
+// Signal 3: recency bias penalty — discount if price hasn't moved in 6+ hours.
+export function computeRecencyPenalty(
+  lastPriceMovedAt: Date | undefined,
+  orderbookUpdatedAt: Date,
+  now = new Date()
+): number {
+  const reference = lastPriceMovedAt ?? orderbookUpdatedAt;
+  const staleness = (now.getTime() - reference.getTime()) / 3_600_000;
+  if (staleness < 6) return 1;          // fresh — no penalty
+  if (staleness >= 24) return 0.4;      // very stale — 60% discount
+  return clamp01(1 - (staleness - 6) / (24 - 6) * 0.6);
+}
+
+// Signal 4: minimum top-of-book depth gate.
+export const MIN_TOP_OF_BOOK_USD = 500;
+
+export function passesLiquidityGate(market: AgentMarket): boolean {
+  const bid = market.topOfBookDepthBid ?? market.liquidity / 20;
+  const ask = market.topOfBookDepthAsk ?? market.liquidity / 20;
+  return bid >= MIN_TOP_OF_BOOK_USD && ask >= MIN_TOP_OF_BOOK_USD;
+}
+
+// Signal 5: consensus divergence — LLM estimate vs market midpoint.
+// >15% gap = highest priority (score 1). Scales down below 15%.
+export function computeConsensusDivergenceScore(
+  estimatedProbability: number | undefined,
+  marketMidpoint: number
+): number {
+  if (estimatedProbability === undefined) return 0;
+  const gap = Math.abs(estimatedProbability - marketMidpoint);
+  // 0.15 (15%) → score 1.0; scales linearly down to 0 at 0% gap.
+  return clamp01(gap / 0.15);
+}
+
+// ─── Main scoring function ───────────────────────────────────────────────────
 
 export function scoreOpportunity(
   market: AgentMarket,
   risk: RiskDecision,
   weights: MarketSelectionWeights = DEFAULT_MARKET_SELECTION_WEIGHTS,
-  now = new Date()
+  now = new Date(),
+  ensemble?: EnsembleDecision
 ): MarketSelectionScore {
+  // Gate 4: hard liquidity gate — zero total score if fails.
+  const passedLiquidityGate = passesLiquidityGate(market);
+
   const edgeScore = clamp01(risk.diagnostics.selectedEdge / 0.2);
   const confidenceScore = clamp01(risk.intent?.confidence ?? 0);
   const liquidityScore = computeLiquidityScore(market.liquidity);
   const timeRemainingScore = computeTimeRemainingScore(market.expiresAt, now);
-  const total =
-    edgeScore * weights.edge +
-    confidenceScore * weights.confidence +
-    liquidityScore * weights.liquidity +
-    timeRemainingScore * weights.timeRemaining;
+  const volumeVelocityScore = computeVolumeVelocityScore(
+    market.volume24h,
+    market.volume1h
+  );
+  const consensusDivergenceScore = computeConsensusDivergenceScore(
+    ensemble?.estimatedProbability ?? risk.intent?.estimatedProbability,
+    market.midpoint
+  );
+
+  // Signal 3: recency penalty multiplied into total.
+  const recencyPenalty = computeRecencyPenalty(
+    market.lastPriceMovedAt,
+    market.orderbookUpdatedAt,
+    now
+  );
+
+  const rawTotal = passedLiquidityGate
+    ? edgeScore * weights.edge +
+      confidenceScore * weights.confidence +
+      liquidityScore * weights.liquidity +
+      timeRemainingScore * weights.timeRemaining +
+      volumeVelocityScore * weights.volumeVelocity +
+      consensusDivergenceScore * weights.consensusDivergence
+    : 0;
 
   return {
-    total,
+    total: rawTotal * recencyPenalty,
     edgeScore,
     confidenceScore,
     liquidityScore,
     timeRemainingScore,
+    volumeVelocityScore,
+    consensusDivergenceScore,
+    passedLiquidityGate,
+    recencyPenalty,
   };
 }

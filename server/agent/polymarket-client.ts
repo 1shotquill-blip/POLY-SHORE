@@ -279,6 +279,16 @@ export function normalizeAgentMarket(
   const visibleLiquidity = computeVisibleLiquidityUsd(yesBook);
   const gammaLiquidity = toNumber(normalized.liquidity);
 
+  // Top-of-book depth: value of best bid/ask level only (signal 4).
+  const topBid = (yesBook.bids ?? [])[0];
+  const topAsk = (yesBook.asks ?? [])[0];
+  const topOfBookDepthBid = topBid
+    ? toNumber(topBid.price) * toNumber(topBid.size)
+    : 0;
+  const topOfBookDepthAsk = topAsk
+    ? toNumber(topAsk.price) * toNumber(topAsk.size)
+    : 0;
+
   return {
     marketId: String(normalized.id ?? yesBook.market ?? ""),
     conditionId: normalized.conditionId,
@@ -296,6 +306,8 @@ export function normalizeAgentMarket(
       toNumber(normalized.volume24h, toNumber(normalized.volume))
     ),
     liquidity: Math.max(gammaLiquidity, visibleLiquidity),
+    topOfBookDepthBid,
+    topOfBookDepthAsk,
     expiresAt,
     orderbookUpdatedAt,
     negRisk: yesBook.neg_risk,

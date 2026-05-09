@@ -22,7 +22,11 @@ export interface AgentMarket {
   spread: number;
   midpoint: number;
   volume24h: number;
+  volume1h?: number;
   liquidity: number;
+  topOfBookDepthBid?: number;
+  topOfBookDepthAsk?: number;
+  lastPriceMovedAt?: Date;
   expiresAt: Date;
   orderbookUpdatedAt: Date;
   negRisk?: boolean;
