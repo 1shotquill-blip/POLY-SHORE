@@ -58,4 +58,9 @@ export const ENV = {
       process.env.POLYMARKET_MAX_SPREAD_BPS ??
       "500"
   ),
+  // ─── Runtime tuning (spec §3.2) ────────────────────────────────────────
+  orderTtlMs: Number(process.env.ORDER_TTL_MS ?? "300000"),
+  pollIntervalMs: Number(process.env.POLL_INTERVAL_MS ?? "15000"),
+  maxPositionUsd: Number(process.env.MAX_POSITION_USD ?? "100"),
+  maxDrawdownPct: Number(process.env.MAX_DRAWDOWN_PCT ?? "0.15") * 100,
 };

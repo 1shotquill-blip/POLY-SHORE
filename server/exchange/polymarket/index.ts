@@ -116,7 +116,7 @@ export function getPolymarketLiveReadiness(): PolymarketLiveReadiness {
 
 export class PolymarketAdapter implements ExecutionAdapter {
   private readonly trackedOrders = new Map<string, TrackedOrder>();
-  private readonly killswitch: PolymarketKillswitch;
+  readonly killswitch: PolymarketKillswitch;
 
   constructor(
     private readonly client: PolymarketClientLike,
@@ -260,3 +260,24 @@ export {
 } from "./reconciler";
 export * from "./types";
 export { resetPolymarketClientForTests };
+
+// ─── Execution Adapter Factory ───────────────────────────────────────────────
+
+import { PaperExecutionAdapter } from "../../agent/paper-execution";
+import type { ExecutionAdapter as IExecutionAdapter } from "../../agent/execution-adapter";
+
+export async function createExecutionAdapter(): Promise<IExecutionAdapter> {
+  const mode = process.env.EXECUTION_MODE ?? (ENV.liveTradingEnabled ? "live" : "paper");
+
+  if (mode === "live") {
+    const readiness = getPolymarketLiveReadiness();
+    if (!readiness.ready) {
+      throw new PolymarketConfigurationError(
+        `Cannot start live adapter — missing env vars: ${readiness.missing.join(", ")}`
+      );
+    }
+    return PolymarketAdapter.create();
+  }
+
+  return new PaperExecutionAdapter();
+}

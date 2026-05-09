@@ -10,8 +10,11 @@ export interface PolymarketKillswitchLimits {
   maxSpreadBps: number;
 }
 
+export type CancelAllFn = () => Promise<void>;
+
 export class PolymarketKillswitch {
   private readonly orderTimestamps: number[] = [];
+  private disarmed = false;
 
   constructor(
     private readonly limits: PolymarketKillswitchLimits = {
@@ -23,8 +26,26 @@ export class PolymarketKillswitch {
     }
   ) {}
 
+  // Gap 9 fix: disarm blocks all future orders AND cancels open GTC orders.
+  async disarm(cancelAll?: CancelAllFn): Promise<void> {
+    this.disarmed = true;
+    console.error("[Killswitch] DISARMED — blocking all new orders");
+    if (cancelAll) {
+      try {
+        await cancelAll();
+        console.log("[Killswitch] Open GTC orders cancelled");
+      } catch (err) {
+        console.error("[Killswitch] Failed to cancel open orders:", err);
+      }
+    }
+  }
+
+  isArmed(): boolean {
+    return this.limits.armed && !this.disarmed;
+  }
+
   assertCanSubmit(notionalUsd: number, now = new Date()): void {
-    if (!this.limits.armed) {
+    if (!this.limits.armed || this.disarmed) {
       throw new KillswitchBlocked(
         "POLYMARKET_KILLSWITCH_ARMED must be true before live order submission"
       );

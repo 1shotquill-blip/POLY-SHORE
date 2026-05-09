@@ -1,360 +1,298 @@
 import {
-  getBotConfig,
   updateBotConfig,
   insertEquitySnapshot,
   getLatestEquitySnapshot,
-  insertSignal,
-  getRecentSignals,
   getOpenOrders,
 } from "./db";
-import { ingestMarketData, getMarketData, isOrderbookStale } from "./ingestion";
-import { assembleEnsemble } from "./intelligence";
-import {
-  computeEdge,
-  computeKellySize,
-  checkRisk,
-  computeDrawdown,
-  shouldTriggerEmergencyBrake,
-} from "./strategy";
-import { placeGTCLimitOrder, cancelOrder, isOrderExpired } from "./execution";
+import { updateOrderSyncState } from "./db";
 import { notifyOwner } from "./_core/notification";
-import type { OrderbookSnapshot } from "./ingestion";
-
-/**
- * Bot Engine: Main polling loop orchestrating the full trading cycle
- */
+import { ENV } from "./_core/env";
+import { AgentOrchestrator } from "./agent/orchestrator";
+import { LLMIntelligenceEngine } from "./agent/intelligence";
+import { ProductionDeepEdgeGate } from "./agent/deep-edge-gate";
+import { ClobPortfolioProvider } from "./agent/portfolio-provider";
+import { scanTradableMarkets } from "./agent/market-scanner";
+import { createExecutionAdapter } from "./exchange/polymarket/index";
+import { DEFAULT_RISK_LIMITS } from "./agent/risk-manager";
+import type { ExecutionAdapter } from "./agent/execution-adapter";
+import type { RiskLimits } from "./agent/types";
 
 export interface BotEngineConfig {
   pollingIntervalSeconds: number;
+  lifecyclePollingIntervalSeconds: number;
   minVolume24h: number;
+  minLiquidity: number;
   maxSpread: number;
-  edgeThreshold: number;
-  kellyFraction: number;
-  maxSingleExposure: number;
-  maxTotalExposure: number;
-  drawdownLimit: number;
-  minConfidence: number;
-  orderTimeoutSeconds: number;
+  orderTtlMs: number;
+  maxMarketsPerTick: number;
+  maxOrdersPerTick: number;
+  riskLimits?: Partial<RiskLimits>;
 }
+
+const DEFAULT_CONFIG: BotEngineConfig = {
+  pollingIntervalSeconds: 15,
+  lifecyclePollingIntervalSeconds: Math.round(ENV.pollIntervalMs / 1_000),
+  minVolume24h: 5_000,
+  minLiquidity: 1_000,
+  maxSpread: 0.05,
+  orderTtlMs: ENV.orderTtlMs,
+  maxMarketsPerTick: 20,
+  maxOrdersPerTick: 1,
+};
 
 export class BotEngine {
   private isRunning = false;
   private isPaused = false;
   private emergencyBrakeTriggered = false;
-  private pollingInterval: NodeJS.Timeout | null = null;
-  private currentBalance = 10000; // Starting balance in USDC
-  private peakBalance = 10000;
-  private currentExposure = 0; // percentage
-  private config: BotEngineConfig;
-  private executionMode: "paper" | "live" = "paper";
+  private tickInterval: NodeJS.Timeout | null = null;
+  private lifecycleInterval: NodeJS.Timeout | null = null;
+  private readonly config: BotEngineConfig;
+  private orchestrator: AgentOrchestrator | null = null;
+  private executionAdapter: ExecutionAdapter | null = null;
 
-  constructor(config: BotEngineConfig) {
-    this.config = config;
+  constructor(config: Partial<BotEngineConfig> = {}) {
+    this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
-  /**
-   * Start the bot
-   */
   async start(): Promise<void> {
     if (this.isRunning) {
       console.log("[Bot] Already running");
       return;
     }
 
+    this.executionAdapter = await createExecutionAdapter();
+
+    const portfolioProvider = new ClobPortfolioProvider();
+    const intelligence = new LLMIntelligenceEngine();
+    const deepEdgeGate = new ProductionDeepEdgeGate();
+
+    this.orchestrator = new AgentOrchestrator({
+      marketProvider: {
+        scan: async (now) =>
+          (
+            await scanTradableMarkets(
+              {
+                limit: this.config.maxMarketsPerTick * 3,
+                minVolume24h: this.config.minVolume24h,
+                minLiquidity: this.config.minLiquidity,
+              },
+              { ...DEFAULT_RISK_LIMITS, maxSpread: this.config.maxSpread },
+              now
+            )
+          ).tradable.slice(0, this.config.maxMarketsPerTick),
+      },
+      portfolioProvider,
+      intelligence,
+      execution: this.executionAdapter,
+      deepEdgeGate,
+      maxOrdersPerTick: this.config.maxOrdersPerTick,
+      riskLimits: {
+        ...DEFAULT_RISK_LIMITS,
+        maxOrderSizeUsd: ENV.maxPositionUsd,
+        maxDrawdownPct: ENV.maxDrawdownPct,
+        ...this.config.riskLimits,
+      },
+    });
+
     this.isRunning = true;
     this.isPaused = false;
     this.emergencyBrakeTriggered = false;
 
-    console.log(`[Bot] Starting in ${this.executionMode} mode`);
-    await updateBotConfig({
-      isRunning: 1,
-      isPaused: 0,
-      emergencyBrakeTriggered: 0,
-    });
+    const mode = process.env.EXECUTION_MODE ?? (ENV.liveTradingEnabled ? "live" : "paper");
+    console.log(`[Bot] Starting in ${mode} mode`);
+    await updateBotConfig({ isRunning: 1, isPaused: 0, emergencyBrakeTriggered: 0 });
 
-    // Start polling loop
-    this.pollingInterval = setInterval(() => {
-      this.tick().catch(error => console.error("[Bot] Tick error:", error));
-    }, this.config.pollingIntervalSeconds * 1000);
+    this.tickInterval = setInterval(() => {
+      this.tick().catch(err => console.error("[Bot] Tick error:", err));
+    }, this.config.pollingIntervalSeconds * 1_000);
 
-    // Run first tick immediately
+    this.lifecycleInterval = setInterval(() => {
+      this.pollOrderLifecycle().catch(err =>
+        console.error("[Bot] Lifecycle poll error:", err)
+      );
+    }, this.config.lifecyclePollingIntervalSeconds * 1_000);
+
     await this.tick();
   }
 
-  /**
-   * Stop the bot gracefully
-   */
   async stop(): Promise<void> {
-    if (!this.isRunning) {
-      console.log("[Bot] Not running");
-      return;
-    }
+    if (!this.isRunning) return;
 
     this.isRunning = false;
-    if (this.pollingInterval) {
-      clearInterval(this.pollingInterval);
-      this.pollingInterval = null;
-    }
+    if (this.tickInterval) { clearInterval(this.tickInterval); this.tickInterval = null; }
+    if (this.lifecycleInterval) { clearInterval(this.lifecycleInterval); this.lifecycleInterval = null; }
 
-    // Cancel all open orders
-    const openOrders = await getOpenOrders();
-    for (const order of openOrders) {
-      await cancelOrder(order.nonce, this.executionMode);
-    }
-
-    console.log("[Bot] Stopped gracefully");
+    await this.cancelAllOpenOrders("stop");
     await updateBotConfig({ isRunning: 0 });
+    console.log("[Bot] Stopped");
   }
 
-  /**
-   * Pause the bot (can be resumed)
-   */
   async pause(): Promise<void> {
     this.isPaused = true;
-    console.log("[Bot] Paused");
     await updateBotConfig({ isPaused: 1 });
+    console.log("[Bot] Paused");
   }
 
-  /**
-   * Resume the bot
-   */
   async resume(): Promise<void> {
     this.isPaused = false;
     this.emergencyBrakeTriggered = false;
-    console.log("[Bot] Resumed");
     await updateBotConfig({ isPaused: 0, emergencyBrakeTriggered: 0 });
+    console.log("[Bot] Resumed");
   }
 
-  /**
-   * Main polling tick: orchestrates the full trading cycle
-   */
-  private async tick(): Promise<void> {
-    if (this.isPaused || this.emergencyBrakeTriggered) {
-      console.log("[Bot] Tick skipped (paused or emergency brake)");
-      return;
-    }
-
-    try {
-      // 1. Fetch eligible markets
-      const markets = await ingestMarketData(
-        this.config.minVolume24h,
-        this.config.maxSpread
-      );
-      console.log(`[Bot] Fetched ${markets.length} eligible markets`);
-
-      // 2. For each market, run the decision pipeline
-      for (const market of markets.slice(0, 10)) {
-        // Limit to 10 markets per tick
-        await this.evaluateMarket(market.id);
-      }
-
-      // 3. Check order timeouts and re-evaluate
-      await this.checkOrderTimeouts();
-
-      // 4. Update equity snapshot
-      await this.updateEquitySnapshot();
-    } catch (error) {
-      console.error("[Bot] Tick failed:", error);
-    }
-  }
-
-  /**
-   * Evaluate a single market and place order if conditions met
-   */
-  private async evaluateMarket(marketId: string): Promise<void> {
-    try {
-      const market = await getMarketData(marketId);
-      if (!market) {
-        console.log(`[Bot] Market ${marketId} not found in cache`);
-        return;
-      }
-
-      // Get recent signals
-      const signals = await getRecentSignals(marketId, 5);
-      const signalText = signals
-        .map(s => `${s.source}: ${s.content}`)
-        .join("\n");
-
-      // Assemble ensemble probability
-      const ensemble = await assembleEnsemble(
-        market.question,
-        signalText,
-        [],
-        0.5
-      );
-      if (!ensemble) {
-        console.log(`[Bot] Invalid ensemble output for ${marketId}, skipping`);
-        return;
-      }
-
-      // Compute edge
-      const { buyEdge, sellEdge } = computeEdge({
-        estimatedProbability: ensemble.finalProbability,
-        bestBid: market.bestBid,
-        bestAsk: market.bestAsk,
-        spread: market.bestAsk - market.bestBid,
-      });
-
-      // Check edge threshold
-      const maxEdge = Math.max(buyEdge, sellEdge);
-      if (maxEdge < this.config.edgeThreshold) {
-        console.log(
-          `[Bot] Edge ${maxEdge.toFixed(4)} below threshold for ${marketId}`
-        );
-        return;
-      }
-
-      // Check confidence
-      if (ensemble.finalConfidence < this.config.minConfidence) {
-        console.log(
-          `[Bot] Confidence ${ensemble.finalConfidence.toFixed(2)} below minimum for ${marketId}`
-        );
-        return;
-      }
-
-      // Compute Kelly size
-      const kellySize = computeKellySize(
-        ensemble.finalProbability,
-        1,
-        this.config.kellyFraction
-      );
-
-      // Risk check
-      const drawdown = computeDrawdown(this.currentBalance, this.peakBalance);
-      const riskCheck = checkRisk({
-        currentBalance: this.currentBalance,
-        currentExposure: this.currentExposure,
-        currentDrawdown: drawdown,
-        kellySize,
-        maxSingleExposure: this.config.maxSingleExposure,
-        maxTotalExposure: this.config.maxTotalExposure,
-        drawdownLimit: this.config.drawdownLimit,
-      });
-
-      if (!riskCheck.isRiskAcceptable) {
-        console.log(`[Bot] Risk check failed: ${riskCheck.reason}`);
-
-        // Check if emergency brake triggered
-        if (
-          shouldTriggerEmergencyBrake({
-            currentDrawdown: drawdown,
-            drawdownLimit: this.config.drawdownLimit,
-          })
-        ) {
-          await this.triggerEmergencyBrake();
-        }
-        return;
-      }
-
-      // Determine side and place order
-      const side = buyEdge > sellEdge ? "buy" : "sell";
-      const orderResult = await placeGTCLimitOrder(
-        {
-          marketId,
-          tokenId: market.id,
-          side,
-          price: side === "buy" ? market.bestAsk - 0.01 : market.bestBid + 0.01,
-          size: riskCheck.maxPositionSize,
-          edgeAtPlacement: maxEdge,
-          confidenceAtPlacement: ensemble.finalConfidence,
-        },
-        this.executionMode
-      );
-
-      if (orderResult.status === "pending") {
-        console.log(`[Bot] Order placed: ${orderResult.nonce}`);
-        this.currentExposure +=
-          (riskCheck.maxPositionSize / this.currentBalance) * 100;
-      } else {
-        console.log(`[Bot] Order failed: ${orderResult.reason}`);
-      }
-    } catch (error) {
-      console.error(`[Bot] Error evaluating market ${marketId}:`, error);
-    }
-  }
-
-  /**
-   * Check for expired orders and re-evaluate
-   */
-  private async checkOrderTimeouts(): Promise<void> {
-    const openOrders = await getOpenOrders();
-    for (const order of openOrders) {
-      if (
-        isOrderExpired({
-          nonce: order.nonce,
-          placedAt: order.placedAt,
-          timeoutSeconds: this.config.orderTimeoutSeconds,
-        })
-      ) {
-        console.log(`[Bot] Order ${order.nonce} expired, cancelling`);
-        await cancelOrder(order.nonce, this.executionMode);
-      }
-    }
-  }
-
-  /**
-   * Update equity snapshot
-   */
-  private async updateEquitySnapshot(): Promise<void> {
-    const drawdown = computeDrawdown(this.currentBalance, this.peakBalance);
-    await insertEquitySnapshot({
-      balance: this.currentBalance.toString(),
-      peakBalance: this.peakBalance.toString(),
-      drawdown: drawdown.toString(),
-      totalExposure: this.currentExposure.toString(),
-    });
-  }
-
-  /**
-   * Trigger emergency brake
-   */
-  private async triggerEmergencyBrake(): Promise<void> {
-    this.emergencyBrakeTriggered = true;
-    console.log("[Bot] EMERGENCY BRAKE TRIGGERED");
-
-    // Cancel all open orders
-    const openOrders = await getOpenOrders();
-    for (const order of openOrders) {
-      await cancelOrder(order.nonce, this.executionMode);
-    }
-
-    // Update config
-    await updateBotConfig({ emergencyBrakeTriggered: 1 });
-
-    try {
-      const sent = await notifyOwner({
-        title: "Polymarket bot emergency brake triggered",
-        content: `The bot stopped trading after drawdown reached ${computeDrawdown(this.currentBalance, this.peakBalance).toFixed(2)}%. Open orders were cancelled in ${this.executionMode} mode.`,
-      });
-      console.log(
-        `[Bot] Owner notification ${sent ? "accepted" : "not accepted by notification service"}`
-      );
-    } catch (error) {
-      console.warn("[Bot] Owner notification unavailable:", error);
-    }
-  }
-
-  /**
-   * Set execution mode
-   */
-  setExecutionMode(mode: "paper" | "live"): void {
-    this.executionMode = mode;
-    console.log(`[Bot] Execution mode set to ${mode}`);
-  }
-
-  /**
-   * Get current status
-   */
   getStatus() {
     return {
       isRunning: this.isRunning,
       isPaused: this.isPaused,
       emergencyBrakeTriggered: this.emergencyBrakeTriggered,
-      executionMode: this.executionMode,
-      currentBalance: this.currentBalance,
-      peakBalance: this.peakBalance,
-      currentExposure: this.currentExposure,
-      drawdown: computeDrawdown(this.currentBalance, this.peakBalance),
+      executionMode: process.env.EXECUTION_MODE ?? (ENV.liveTradingEnabled ? "live" : "paper"),
     };
+  }
+
+  // ─── Main trading tick ────────────────────────────────────────────────────
+
+  private async tick(): Promise<void> {
+    if (this.isPaused || this.emergencyBrakeTriggered || !this.orchestrator) return;
+
+    try {
+      const result = await this.orchestrator.tick();
+      console.log(
+        `[Bot] Tick: scanned=${result.scannedMarkets} submitted=${result.submittedOrders} skipped=${result.skippedMarkets}`
+      );
+      await this.updateEquitySnapshot();
+    } catch (err) {
+      console.error("[Bot] Tick failed:", err);
+    }
+  }
+
+  // ─── GAP 5: Order lifecycle polling ─────────────────────────────────────
+
+  private async pollOrderLifecycle(): Promise<void> {
+    if (!this.executionAdapter) return;
+
+    const openOrders = await getOpenOrders();
+    const now = new Date();
+
+    for (const order of openOrders) {
+      const age = now.getTime() - new Date(order.placedAt).getTime();
+      const stale = age > this.config.orderTtlMs;
+
+      if (stale && order.nonce) {
+        try {
+          await this.executionAdapter.cancel(order.nonce, now);
+          await updateOrderSyncState(order.nonce, {
+            status: "cancelled",
+            lifecycleState: "CANCEL_CONFIRMED",
+          });
+          console.log(`[Bot] Cancelled stale order ${order.nonce} (age ${Math.round(age / 1000)}s)`);
+        } catch (err) {
+          console.warn(`[Bot] Failed to cancel order ${order.nonce}:`, err);
+        }
+        continue;
+      }
+
+      if (order.nonce) {
+        try {
+          const dummyMarket = {
+            marketId: order.marketId,
+            yesTokenId: order.tokenId,
+            noTokenId: "",
+            question: "",
+            bestBid: Number(order.price),
+            bestAsk: Number(order.price),
+            spread: 0,
+            midpoint: Number(order.price),
+            volume24h: 0,
+            liquidity: 0,
+            expiresAt: new Date(Date.now() + 86_400_000),
+            orderbookUpdatedAt: now,
+          } as import("./agent/types").AgentMarket;
+
+          const update = await this.executionAdapter.sync(order.nonce, dummyMarket, now);
+
+          const newStatus =
+            update.status === "filled"
+              ? "filled"
+              : update.status === "partially_filled"
+                ? "partially_filled"
+                : update.status === "cancelled" || update.status === "expired"
+                  ? update.status
+                  : undefined;
+
+          if (newStatus && newStatus !== order.status) {
+            await updateOrderSyncState(order.nonce, { status: newStatus });
+            console.log(`[Bot] Order ${order.nonce} → ${newStatus}`);
+
+            if (newStatus === "filled" || newStatus === "cancelled") {
+              await this.updateEquitySnapshot();
+            }
+          }
+        } catch (err) {
+          console.warn(`[Bot] Sync failed for order ${order.nonce}:`, err);
+        }
+      }
+    }
+  }
+
+  // ─── Helpers ─────────────────────────────────────────────────────────────
+
+  private async cancelAllOpenOrders(reason: string): Promise<void> {
+    if (!this.executionAdapter) return;
+    const openOrders = await getOpenOrders();
+    for (const order of openOrders) {
+      try {
+        await this.executionAdapter.cancel(order.nonce, new Date());
+        await updateOrderSyncState(order.nonce, {
+          status: "cancelled",
+          lifecycleState: "CANCEL_CONFIRMED",
+        });
+      } catch (err) {
+        console.warn(`[Bot] Cancel failed (${reason}) for ${order.nonce}:`, err);
+      }
+    }
+  }
+
+  private async triggerEmergencyBrake(drawdownPct: number): Promise<void> {
+    this.emergencyBrakeTriggered = true;
+    console.error("[Bot] EMERGENCY BRAKE — drawdown", drawdownPct.toFixed(2), "%");
+
+    // Gap 9: disarm killswitch, which cancels all open GTC orders.
+    const { PolymarketAdapter } = await import("./exchange/polymarket/index");
+    if (this.executionAdapter instanceof PolymarketAdapter) {
+      await this.executionAdapter.killswitch.disarm(() =>
+        this.cancelAllOpenOrders("killswitch disarm")
+      );
+    } else {
+      await this.cancelAllOpenOrders("emergency brake");
+    }
+
+    await updateBotConfig({ emergencyBrakeTriggered: 1 });
+    try {
+      await notifyOwner({
+        title: "Polymarket bot emergency brake triggered",
+        content: `Bot paused after drawdown reached ${drawdownPct.toFixed(2)}%. All open orders cancelled.`,
+      });
+    } catch {
+      // notification not critical
+    }
+  }
+
+  private async updateEquitySnapshot(): Promise<void> {
+    const latest = await getLatestEquitySnapshot();
+    const balance = latest ? Number(latest.balance) : 0;
+    const peakBalance = latest ? Number(latest.peakBalance) : balance;
+    const drawdown = peakBalance > 0 ? ((peakBalance - balance) / peakBalance) * 100 : 0;
+
+    await insertEquitySnapshot({
+      balance: balance.toString(),
+      peakBalance: Math.max(balance, peakBalance).toString(),
+      drawdown: drawdown.toString(),
+      totalExposure: "0",
+    });
+
+    const maxDrawdown = this.config.riskLimits?.maxDrawdownPct ?? ENV.maxDrawdownPct;
+    if (drawdown >= maxDrawdown && !this.emergencyBrakeTriggered) {
+      await this.triggerEmergencyBrake(drawdown);
+    }
   }
 }

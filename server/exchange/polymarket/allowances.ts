@@ -52,6 +52,14 @@ export async function ensureAllowance(
   }
 }
 
+// Alias used in the go-live runbook (spec §5 Step 3).
+export async function checkAndApproveAllowance(
+  client: PolymarketClientLike,
+  requiredNotionalUsd = 1_000
+): Promise<void> {
+  await ensureTradingAllowances(client, requiredNotionalUsd, "");
+}
+
 export async function ensureTradingAllowances(
   client: PolymarketClientLike,
   requiredNotionalUsd: number,

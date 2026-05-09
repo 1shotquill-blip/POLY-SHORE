@@ -1,7 +1,121 @@
+import { ENV } from "../_core/env";
 import type { AgentMarket } from "./types";
 
 const GAMMA_HOST = "https://gamma-api.polymarket.com";
 const CLOB_HOST = "https://clob.polymarket.com";
+const CLOB_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market";
+
+// ─── WebSocket Orderbook Manager ────────────────────────────────────────────
+
+const RECONNECT_BASE_MS = 1_000;
+const RECONNECT_MAX_MS = 60_000;
+
+interface WsBookMessage {
+  event_type?: string;
+  asset_id?: string;
+  market?: string;
+  bids?: Array<{ price: string; size: string }>;
+  asks?: Array<{ price: string; size: string }>;
+  timestamp?: string | number;
+}
+
+export class OrderbookWebSocketManager {
+  private ws: WebSocket | null = null;
+  private readonly cache = new Map<string, ClobOrderBookResponse>();
+  private trackedTokenIds = new Set<string>();
+  private reconnectAttempt = 0;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private closed = false;
+  private readonly wsUrl: string;
+
+  constructor(wsUrl = CLOB_WS_URL) {
+    this.wsUrl = wsUrl;
+  }
+
+  connect(tokenIds: string[]): void {
+    for (const id of tokenIds) this.trackedTokenIds.add(id);
+    if (!this.ws || this.ws.readyState === WebSocket.CLOSED) {
+      this.open();
+    } else if (this.ws.readyState === WebSocket.OPEN) {
+      this.subscribe(tokenIds);
+    }
+  }
+
+  getBook(tokenId: string): ClobOrderBookResponse | null {
+    return this.cache.get(tokenId) ?? null;
+  }
+
+  close(): void {
+    this.closed = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.ws?.close();
+  }
+
+  private open(): void {
+    if (this.closed) return;
+    try {
+      this.ws = new WebSocket(this.wsUrl);
+    } catch {
+      this.scheduleReconnect();
+      return;
+    }
+
+    this.ws.onopen = () => {
+      this.reconnectAttempt = 0;
+      this.subscribe(Array.from(this.trackedTokenIds));
+    };
+
+    this.ws.onmessage = (event: MessageEvent) => {
+      try {
+        const messages: WsBookMessage[] = Array.isArray(event.data)
+          ? (event.data as WsBookMessage[])
+          : [JSON.parse(String(event.data)) as WsBookMessage];
+        for (const msg of messages) this.handleMessage(msg);
+      } catch {
+        // ignore malformed frames
+      }
+    };
+
+    this.ws.onerror = () => { /* logged via onclose */ };
+    this.ws.onclose = () => {
+      if (!this.closed) this.scheduleReconnect();
+    };
+  }
+
+  private subscribe(tokenIds: string[]): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || tokenIds.length === 0) return;
+    this.ws.send(
+      JSON.stringify({ type: "subscribe", channel: "book", market_token_ids: tokenIds })
+    );
+  }
+
+  private handleMessage(msg: WsBookMessage): void {
+    const tokenId = msg.asset_id ?? msg.market;
+    if (!tokenId) return;
+    const existing = this.cache.get(tokenId) ?? {};
+    this.cache.set(tokenId, {
+      ...existing,
+      asset_id: tokenId,
+      bids: msg.bids ?? existing.bids,
+      asks: msg.asks ?? existing.asks,
+      timestamp: msg.timestamp ?? existing.timestamp ?? Date.now(),
+    });
+  }
+
+  private scheduleReconnect(): void {
+    if (this.closed) return;
+    const delay = Math.min(
+      RECONNECT_BASE_MS * 2 ** this.reconnectAttempt,
+      RECONNECT_MAX_MS
+    );
+    this.reconnectAttempt += 1;
+    this.reconnectTimer = setTimeout(() => this.open(), delay);
+  }
+}
+
+export const orderbookWsManager = new OrderbookWebSocketManager(
+  ENV.polymarketWsUrl || CLOB_WS_URL
+);
 
 export interface HttpClient {
   fetch(input: string | URL, init?: RequestInit): Promise<Response>;
@@ -253,12 +367,15 @@ export async function scanPolymarketCandidates(
     );
 
   const candidates: AgentMarket[] = [];
+  const allTokenIds = normalizedGamma.flatMap(m => parseJsonArray(m.clobTokenIds));
+  orderbookWsManager.connect(allTokenIds);
 
   for (const market of normalizedGamma) {
     const [yesTokenId] = parseJsonArray(market.clobTokenIds);
     if (!yesTokenId) continue;
 
-    const book = await fetchClobOrderBook(yesTokenId, options);
+    const cachedBook = orderbookWsManager.getBook(yesTokenId);
+    const book = cachedBook ?? await fetchClobOrderBook(yesTokenId, options);
     const agentMarket = normalizeAgentMarket(market, book, fetchedAt);
     if (agentMarket) candidates.push(agentMarket);
   }
