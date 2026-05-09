@@ -1,4 +1,5 @@
 import type { AgentMarket, ExecutionReceipt, TradeIntent } from "./types";
+import { computeExecutionMicrostructureProfile } from "./execution-microstructure";
 
 export type OrderLifecycleStatus =
   | "accepted"
@@ -72,8 +73,12 @@ export function computePaperFillSizeUsd(
   if (remainingSizeUsd <= 0) return 0;
   if (!isIntentImmediatelyMarketable(intent, market)) return 0;
 
+  const microstructure = computeExecutionMicrostructureProfile(market);
   const liquidityCap = Math.max(0, market.liquidity * 0.02);
-  const maxFill = Math.min(remainingSizeUsd, liquidityCap || remainingSizeUsd);
+  const maxFill = Math.min(
+    remainingSizeUsd,
+    (liquidityCap || remainingSizeUsd) * microstructure.sizeMultiplier
+  );
   if (maxFill >= remainingSizeUsd) return remainingSizeUsd;
   return Math.max(
     0,

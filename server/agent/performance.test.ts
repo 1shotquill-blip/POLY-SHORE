@@ -60,5 +60,7 @@ describe("performance metrics", () => {
     expect(summary.winRate).toBe(0.5);
     expect(summary.profitFactor).toBe(1);
     expect(summary.brierScore).toBeCloseTo(0.34);
+    expect(summary.hiddenEdgeTrades).toBe(0);
+    expect(summary.hiddenEdgeHitRate).toBe(0);
   });
 });

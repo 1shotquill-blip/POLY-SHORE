@@ -105,6 +105,7 @@ export interface RiskDecision {
     cappedSizeUsd: number;
     drawdownPct: number;
     marketDataStatus: MarketDataStatus;
+    executionMultiplier?: number;
   };
 }
 

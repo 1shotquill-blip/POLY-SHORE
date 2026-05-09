@@ -36,6 +36,7 @@ export function mapDecisionAuditToInsert(
       ensemble: audit.ensemble,
       deepEdge: audit.deepEdge,
       selectionScore: audit.selectionScore,
+      ranking: audit.ranking,
       receipt: audit.receipt,
       lifecycleUpdate: audit.lifecycleUpdate,
     },

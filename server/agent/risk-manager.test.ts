@@ -60,6 +60,7 @@ describe("production risk manager", () => {
     expect(decision.allowed).toBe(true);
     expect(decision.intent?.side).toBe("buy");
     expect(decision.intent?.limitPrice).toBe(freshMarket.bestAsk);
+    expect(decision.diagnostics.executionMultiplier).toBeGreaterThan(0);
   });
 
   it("blocks stale orderbooks", () => {

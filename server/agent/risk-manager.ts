@@ -7,6 +7,7 @@ import type {
   RiskLimits,
   TradeIntent,
 } from "./types";
+import { computeExecutionMicrostructureProfile } from "./execution-microstructure";
 
 export const DEFAULT_RISK_LIMITS: RiskLimits = {
   minEdge: 0.06,
@@ -134,6 +135,9 @@ export function evaluateRisk(
     portfolio.bankrollUsd * (limits.maxTotalExposurePct / 100);
   const liquidityCapUsd =
     market.liquidity * (limits.liquidityParticipationLimitPct / 100);
+  const executionProfile = computeExecutionMicrostructureProfile(market, now);
+  const executionAdjustedKellyUsd =
+    kellySizeUsd * executionProfile.sizeMultiplier;
 
   const currentMarketExposure =
     portfolio.marketExposureUsd[market.marketId] ?? 0;
@@ -153,7 +157,7 @@ export function evaluateRisk(
     totalCapUsd - portfolio.openExposureUsd
   );
   const cappedSizeUsd = Math.min(
-    kellySizeUsd,
+    executionAdjustedKellyUsd,
     limits.maxOrderSizeUsd,
     remainingSingleMarketUsd,
     remainingCategoryUsd,
@@ -192,6 +196,7 @@ export function evaluateRisk(
       cappedSizeUsd,
       drawdownPct,
       marketDataStatus,
+      executionMultiplier: executionProfile.sizeMultiplier,
     },
   };
 }

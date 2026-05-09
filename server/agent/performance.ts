@@ -1,12 +1,15 @@
 export interface SettledTrade {
   tradeId: string;
   marketId: string;
+  category?: string;
   side: "buy" | "sell";
   entryPrice: number;
   sizeUsd: number;
   estimatedProbability: number;
   confidence: number;
   resolvedProbability: 0 | 1;
+  hiddenEdge?: boolean;
+  anomalyCausal?: boolean;
 }
 
 export interface PerformanceSummary {
@@ -19,6 +22,9 @@ export interface PerformanceSummary {
   averageLossUsd: number;
   profitFactor: number;
   brierScore: number;
+  hiddenEdgeTrades: number;
+  hiddenEdgeHitRate: number;
+  hiddenEdgePnlUsd: number;
 }
 
 export function computeTradePnlUsd(trade: SettledTrade): number {
@@ -49,6 +55,14 @@ export function summarizePerformance(
   const realizedPnlUsd = pnls.reduce((sum, pnl) => sum + pnl, 0);
   const grossWins = wins.reduce((sum, pnl) => sum + pnl, 0);
   const grossLosses = Math.abs(losses.reduce((sum, pnl) => sum + pnl, 0));
+  const hiddenEdgeTrades = trades.filter(trade => trade.hiddenEdge);
+  const hiddenEdgeWins = hiddenEdgeTrades.filter(
+    trade => computeTradePnlUsd(trade) > 0
+  );
+  const hiddenEdgePnlUsd = hiddenEdgeTrades.reduce(
+    (sum, trade) => sum + computeTradePnlUsd(trade),
+    0
+  );
 
   return {
     trades: trades.length,
@@ -65,5 +79,11 @@ export function summarizePerformance(
           ? Number.POSITIVE_INFINITY
           : 0,
     brierScore: computeBrierScore(trades),
+    hiddenEdgeTrades: hiddenEdgeTrades.length,
+    hiddenEdgeHitRate:
+      hiddenEdgeTrades.length > 0
+        ? hiddenEdgeWins.length / hiddenEdgeTrades.length
+        : 0,
+    hiddenEdgePnlUsd,
   };
 }

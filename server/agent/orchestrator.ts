@@ -6,6 +6,11 @@ import {
   type MarketSelectionScore,
 } from "./market-selection";
 import {
+  rankOpportunity,
+  type OpportunityRanking,
+  type LearningProfile,
+} from "./opportunity-ranking";
+import {
   persistLifecycleUpdate,
   persistPaperOrderIntent,
 } from "./order-persistence";
@@ -14,6 +19,7 @@ import {
   type DeepEdgeDecision,
   type DeepEdgeGate,
 } from "./deep-edge-gate";
+import { getBayesianPrior } from "../db";
 import type {
   AgentMarket,
   EnsembleDecision,
@@ -46,6 +52,7 @@ export interface AgentDecisionAudit {
   ensemble?: EnsembleDecision;
   deepEdge?: DeepEdgeDecision;
   selectionScore?: MarketSelectionScore;
+  ranking?: OpportunityRanking;
   receipt?: ExecutionReceipt;
   lifecycleUpdate?: OrderLifecycleUpdate;
 }
@@ -67,6 +74,7 @@ export interface AgentOrchestratorOptions {
   maxOrdersPerTick?: number;
   persistOrders?: boolean;
   persistAudits?: boolean;
+  learningProfile?: LearningProfile;
 }
 
 export class AgentOrchestrator {
@@ -79,6 +87,7 @@ export class AgentOrchestrator {
   private readonly maxOrdersPerTick: number;
   private readonly persistOrders: boolean;
   private readonly persistAudits: boolean;
+  private readonly learningProfile?: LearningProfile;
 
   constructor(options: AgentOrchestratorOptions) {
     this.marketProvider = options.marketProvider;
@@ -90,6 +99,7 @@ export class AgentOrchestrator {
     this.maxOrdersPerTick = options.maxOrdersPerTick ?? 1;
     this.persistOrders = options.persistOrders ?? true;
     this.persistAudits = options.persistAudits ?? true;
+    this.learningProfile = options.learningProfile;
   }
 
   async tick(now = new Date()): Promise<AgentTickResult> {
@@ -182,14 +192,34 @@ export class AgentOrchestrator {
       audit => audit.deepEdge?.allowed
     );
 
-    deepEdgeApprovedAudits.sort(
-      (a, b) => (b.selectionScore?.total ?? 0) - (a.selectionScore?.total ?? 0)
+    const rankedAudits = await Promise.all(
+      deepEdgeApprovedAudits.map(async audit => ({
+        ...audit,
+        ranking: rankOpportunity({
+          market: audit.market!,
+          ensemble: audit.ensemble!,
+          risk: audit.risk!,
+          deepEdge: audit.deepEdge!,
+          memoryMatches: audit.deepEdge?.memoryMatches ?? [],
+          learningProfile: {
+            ...this.learningProfile,
+            categoryPrior: audit.market?.category
+              ? Number(
+                  (await getBayesianPrior(audit.market.category))
+                    ?.priorProbability ?? 0.5
+                )
+              : this.learningProfile?.categoryPrior,
+          },
+          now,
+        }),
+      }))
     );
-    const selectedAudits = deepEdgeApprovedAudits.slice(
-      0,
-      this.maxOrdersPerTick
+
+    rankedAudits.sort(
+      (a, b) => (b.ranking?.rank ?? 0) - (a.ranking?.rank ?? 0)
     );
-    const deferredAudits = deepEdgeApprovedAudits.slice(this.maxOrdersPerTick);
+    const selectedAudits = rankedAudits.slice(0, this.maxOrdersPerTick);
+    const deferredAudits = rankedAudits.slice(this.maxOrdersPerTick);
     let submittedOrders = 0;
 
     for (const audit of selectedAudits) {

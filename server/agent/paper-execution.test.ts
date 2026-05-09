@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { computeExecutionMicrostructureProfile } from "./execution-microstructure";
 import { isIntentImmediatelyMarketable } from "./execution-adapter";
 import { PaperExecutionAdapter } from "./paper-execution";
 import type { AgentMarket, TradeIntent } from "./types";
@@ -81,10 +82,14 @@ describe("paper execution adapter", () => {
       thinMarket
     );
     const update = await adapter.sync(receipt.localOrderId, thinMarket);
+    const profile = computeExecutionMicrostructureProfile(thinMarket);
 
     expect(update.status).toBe("partially_filled");
-    expect(update.matchedSizeUsd).toBe(20);
-    expect(update.remainingSizeUsd).toBe(80);
+    expect(update.matchedSizeUsd).toBeCloseTo(20 * profile.sizeMultiplier, 6);
+    expect(update.remainingSizeUsd).toBeCloseTo(
+      100 - 20 * profile.sizeMultiplier,
+      6
+    );
   });
 
   it("expires non-marketable paper orders after ttl", async () => {
