@@ -1,4 +1,5 @@
 import { invokeLLM } from "../_core/llm";
+import { getClobReferencePrice } from "./book-pricing";
 import type {
   AgentMarket,
   EnsembleDecision,
@@ -81,13 +82,17 @@ function formatMarketContext(market: AgentMarket): string {
   const hoursToExpiry = Math.round(
     (market.expiresAt.getTime() - Date.now()) / 3_600_000
   );
+  const referencePrice = getClobReferencePrice(market);
+  const referencePriceLabel = Number.isFinite(referencePrice)
+    ? (referencePrice * 100).toFixed(1)
+    : "n/a";
   return [
     `Question: ${market.question}`,
     market.resolutionCriteria
       ? `Resolution criteria: ${market.resolutionCriteria}`
       : "",
     `Category: ${market.category ?? "unknown"}`,
-    `Market-implied YES probability: ${(market.midpoint * 100).toFixed(1)}%`,
+    `CLOB reference YES probability: ${referencePriceLabel}%`,
     `Best bid: ${(market.bestBid * 100).toFixed(1)}%  Best ask: ${(market.bestAsk * 100).toFixed(1)}%`,
     `24h volume: $${market.volume24h.toLocaleString()}`,
     `Liquidity: $${market.liquidity.toLocaleString()}`,

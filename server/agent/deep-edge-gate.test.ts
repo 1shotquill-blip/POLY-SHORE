@@ -3,7 +3,7 @@ import {
   DeepReasoner,
   StaticDeepReasoningProvider,
 } from "../intelligence/deep-reasoner";
-import { InMemoryVectorMemoryStore } from "../memory/vector-retrieval";
+import type { VectorMemoryStore } from "../memory/vector-retrieval";
 import { ProductionDeepEdgeGate } from "./deep-edge-gate";
 import type { AgentMarket, EnsembleDecision } from "./types";
 
@@ -36,16 +36,21 @@ const decision: EnsembleDecision = {
 
 describe("deep edge gate", () => {
   it("allows only high-anomaly, high-confidence, high-correction opportunities", async () => {
-    const gate = new ProductionDeepEdgeGate({
-      memoryStore: new InMemoryVectorMemoryStore([
+    const memoryStore: VectorMemoryStore = {
+      searchByEmbedding: async () => [
         {
           eventId: "event-1",
           summary: "whale suppression followed by breakout",
-          anomalyType: "crossMarket",
+          anomalyType: "divergence",
           embedding: [0.9, 0.25, 0.7, 0.8, 0.02, 0.5],
           outcome: "causal",
+          similarity: 0.92,
         },
-      ]),
+      ],
+    };
+
+    const gate = new ProductionDeepEdgeGate({
+      memoryStore,
       reasoner: new DeepReasoner(
         new StaticDeepReasoningProvider({
           marketId: "market-1",
@@ -78,8 +83,14 @@ describe("deep edge gate", () => {
       {
         peerMarkets: [{ ...market, marketId: "peer", midpoint: 0.62 }],
         priceHistory: [
-          { observedAt: new Date("2026-01-01T00:00:00Z"), midpoint: 0.44 },
-          { observedAt: new Date("2026-01-01T01:00:00Z"), midpoint: 0.31 },
+          {
+            observedAt: new Date("2026-01-01T00:00:00Z"),
+            referencePrice: 0.44,
+          },
+          {
+            observedAt: new Date("2026-01-01T01:00:00Z"),
+            referencePrice: 0.31,
+          },
         ],
       },
       new Date("2026-01-01T02:00:00Z")

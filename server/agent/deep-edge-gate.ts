@@ -1,4 +1,5 @@
 import { ENV } from "../_core/env";
+import { getClobReferencePrice } from "./book-pricing";
 import {
   scanMarketAnomalies,
   type AnomalyScanResult,
@@ -78,9 +79,10 @@ export class ProductionDeepEdgeGate implements DeepEdgeGate {
       );
     }
 
-    const probabilityGap = Math.abs(
-      decision.estimatedProbability - market.midpoint
-    );
+    const referencePrice = getClobReferencePrice(market);
+    const probabilityGap = Number.isFinite(referencePrice)
+      ? Math.abs(decision.estimatedProbability - referencePrice)
+      : 0;
     const hoursToExpiry =
       (market.expiresAt.getTime() - now.getTime()) / 3_600_000;
     const embedding = buildStructuralEmbedding({

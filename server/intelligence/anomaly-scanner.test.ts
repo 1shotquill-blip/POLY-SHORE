@@ -45,8 +45,14 @@ describe("anomaly scanner", () => {
           },
         ],
         priceHistory: [
-          { observedAt: new Date("2026-01-01T00:00:00Z"), midpoint: 0.42 },
-          { observedAt: new Date("2026-01-01T02:00:00Z"), midpoint: 0.31 },
+          {
+            observedAt: new Date("2026-01-01T00:00:00Z"),
+            referencePrice: 0.42,
+          },
+          {
+            observedAt: new Date("2026-01-01T02:00:00Z"),
+            referencePrice: 0.31,
+          },
         ],
         whaleTrades: [
           {

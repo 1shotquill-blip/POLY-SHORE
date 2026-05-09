@@ -2,13 +2,13 @@
 
 ## Current Status
 
-The production-path implementation changes in this directive are complete and verified. Live trading now has a fail-closed Polymarket CLOB v2 adapter and remains disabled by default unless credentials, allowances, and the kill switch are explicitly configured.
+The production-path implementation changes in this directive are complete and verified. Live trading now has a fail-closed Polymarket CLOB v2 adapter, a canonical CLOB reference-price helper, and remains disabled by default unless credentials, allowances, and the kill switch are explicitly configured.
 
 ## Initial Repo Snapshot
 
 - Absolute path: `/Users/jessewinters/Desktop/POLY-SHORE-main`
 - Branch: `main`
-- Commit: `4ef4298fe2a0cf4e33bf50db8f7683bb09beafd5`
+- Commit: `e4e9353`
 - Dirty files at start:
   - `drizzle/schema.ts`
   - `server/agent/audit-persistence.test.ts`
@@ -24,7 +24,7 @@ The production-path implementation changes in this directive are complete and ve
 - Install: `pnpm install --no-frozen-lockfile` passed after network approval and updated `pnpm-lock.yaml` for `@polymarket/clob-client-v2` and `viem`. The first sandboxed install attempt failed with `ENOTFOUND registry.npmjs.org`.
 - Lint/static gate: `pnpm lint` passed.
 - Typecheck: `pnpm check` passed.
-- Tests: `pnpm test` passed with 21 test files and 75 tests.
+- Tests: `pnpm test` passed with 24 test files and 104 tests.
 - Build: `pnpm build` passed and produced `dist/index.js`. Vite reports only large-chunk warnings.
 - Runtime smoke: `PORT=53123 NODE_ENV=production node dist/index.js` started the production server under approval, and `curl -I http://localhost:53123/` returned HTTP 200. The smoke-test server was stopped afterward.
 - Proof artifacts: required proof files and `dist/index.js` are non-empty.
@@ -42,15 +42,18 @@ The production-path implementation changes in this directive are complete and ve
 - Replaced legacy fill-check behavior with local persisted order state reads and fail-closed live behavior.
 - Replaced the emergency notification print path with the existing owner notification service, while preserving fail-safe bot shutdown behavior.
 - Added the deep-edge anomaly scanner with cross-market, temporal, divergence, and whale-pressure scoring.
+- Added a CLOB book-pricing helper and removed live-path dependence on generic midpoint semantics.
 - Added the Ollama-capable deep reasoner with injectable static provider for deterministic verification.
 - Added vector memory retrieval with structural embeddings and top-k cosine search.
 - Added basket arbitrage construction with Bregman projection and zero-risk positive-EV validation.
 - Added educated-edge metrics for invisible-edge ratio, hidden-edge hit rate, and P&L tracking.
 - Wired the deep-edge gate into the orchestrator so risk-approved trades still cannot execute unless anomaly score, deep-reasoner confidence, and expected correction thresholds pass.
 - Added `server/exchange/polymarket/` with CLOB v2 client initialization, viem signer setup, encrypted L2 credential cache, idempotent allowance checks, live order place/cancel/sync helpers, balance and position normalization, REST reconciliation, optional websocket user-channel capture, typed errors, kill switch limits, and an `ExecutionAdapter` implementation.
+- Added `server/agent/book-pricing.ts` to make the live book reference price explicit and shared across intelligence, gating, and execution microstructure.
 - Wired `server/execution.ts` live mode to the Polymarket adapter instead of hardcoded non-operational live responses.
 - Added `@polymarket/clob-client-v2` and `viem` dependencies with updated lockfile.
 - Added Polymarket adapter tests covering injected-client order placement, sync, cancel, kill-switch blocking, per-market cap, max-spread guard, and exchange-state normalization.
+- Removed the dead `server/ingestion.ts` Gamma-only duplicate path from the codebase and from the lint target list.
 - Added `.env.example` and a live readiness gate that blocks `bot.setExecutionMode({ mode: "live" })` until wallet/funder/RPC, L2 credential path, live flag, and kill switch configuration are complete.
 
 ## Runtime Notes

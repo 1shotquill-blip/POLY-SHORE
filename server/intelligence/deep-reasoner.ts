@@ -1,4 +1,5 @@
 import { ENV } from "../_core/env";
+import { getClobReferencePrice } from "../agent/book-pricing";
 import type { AgentMarket, EnsembleDecision } from "../agent/types";
 import type { AnomalyScanResult } from "./anomaly-scanner";
 import type { SimilarHistoricalEvent } from "../memory/vector-retrieval";
@@ -81,13 +82,17 @@ function parseReasoningPayload(
 
 function buildPrompt(input: DeepReasoningInput): string {
   const { market, decision, anomaly, memoryMatches = [] } = input;
+  const referencePrice = getClobReferencePrice(market);
+  const referencePriceLabel = Number.isFinite(referencePrice)
+    ? referencePrice.toFixed(4)
+    : "n/a";
   return [
     "You are a hyper-rational prediction-market analyst. Treat the market as an adversarial puzzle, not as a popularity contest.",
     "",
     "Market:",
     `Question: ${market.question}`,
     `Resolution criteria: ${market.resolutionCriteria ?? "not supplied"}`,
-    `Current midpoint: ${market.midpoint}`,
+    `Current CLOB reference price: ${referencePriceLabel}`,
     `Best bid: ${market.bestBid}`,
     `Best ask: ${market.bestAsk}`,
     `Model probability: ${decision.estimatedProbability}`,

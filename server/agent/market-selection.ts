@@ -1,4 +1,5 @@
 import type { AgentMarket, EnsembleDecision, RiskDecision } from "./types";
+import { getClobReferencePrice } from "./book-pricing";
 
 export interface MarketSelectionWeights {
   edge: number;
@@ -91,14 +92,14 @@ export function passesLiquidityGate(market: AgentMarket): boolean {
   return bid >= MIN_TOP_OF_BOOK_USD && ask >= MIN_TOP_OF_BOOK_USD;
 }
 
-// Signal 5: consensus divergence — LLM estimate vs market midpoint.
+// Signal 5: consensus divergence — LLM estimate vs CLOB reference price.
 // >15% gap = highest priority (score 1). Scales down below 15%.
 export function computeConsensusDivergenceScore(
   estimatedProbability: number | undefined,
-  marketMidpoint: number
+  referencePrice: number
 ): number {
   if (estimatedProbability === undefined) return 0;
-  const gap = Math.abs(estimatedProbability - marketMidpoint);
+  const gap = Math.abs(estimatedProbability - referencePrice);
   // 0.15 (15%) → score 1.0; scales linearly down to 0 at 0% gap.
   return clamp01(gap / 0.15);
 }
@@ -125,7 +126,7 @@ export function scoreOpportunity(
   );
   const consensusDivergenceScore = computeConsensusDivergenceScore(
     ensemble?.estimatedProbability ?? risk.intent?.estimatedProbability,
-    market.midpoint
+    getClobReferencePrice(market)
   );
 
   // Signal 3: recency penalty multiplied into total.

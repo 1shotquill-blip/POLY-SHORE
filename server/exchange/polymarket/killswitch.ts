@@ -1,4 +1,5 @@
 import { ENV } from "../../_core/env";
+import { getClobSpreadBps } from "../../agent/book-pricing";
 import type { AgentMarket } from "../../agent/types";
 import { KillswitchBlocked } from "./errors";
 
@@ -86,8 +87,10 @@ export class PolymarketKillswitch {
       );
     }
 
-    const midpoint = market.midpoint > 0 ? market.midpoint : 1;
-    const spreadBps = (market.spread / midpoint) * 10_000;
+    const spreadBps = getClobSpreadBps(market);
+    if (!Number.isFinite(spreadBps)) {
+      throw new KillswitchBlocked("Market book is invalid");
+    }
     if (spreadBps > this.limits.maxSpreadBps) {
       throw new KillswitchBlocked(
         `Market spread ${spreadBps.toFixed(0)} bps exceeds cap ${this.limits.maxSpreadBps}`

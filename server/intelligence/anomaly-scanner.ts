@@ -1,8 +1,9 @@
+import { getClobReferencePrice } from "../agent/book-pricing";
 import type { AgentMarket, EnsembleDecision } from "../agent/types";
 
 export interface PriceObservation {
   observedAt: Date;
-  midpoint: number;
+  referencePrice: number;
 }
 
 export interface TradePrint {
@@ -43,7 +44,12 @@ function scoreDivergence(
   market: AgentMarket,
   decision: EnsembleDecision
 ): AnomalyComponentScore {
-  const gap = Math.abs(decision.estimatedProbability - market.midpoint);
+  const referencePrice = getClobReferencePrice(market);
+  if (!Number.isFinite(referencePrice)) {
+    return { score: 0, reason: "invalid CLOB reference price" };
+  }
+
+  const gap = Math.abs(decision.estimatedProbability - referencePrice);
   const score = clamp01(gap / 0.2);
   return {
     score,
@@ -62,8 +68,8 @@ function scoreTemporal(
     return { score: 0, reason: "insufficient temporal history" };
   }
 
-  const first = history[0].midpoint;
-  const last = history[history.length - 1].midpoint;
+  const first = history[0].referencePrice;
+  const last = history[history.length - 1].referencePrice;
   const move = Math.abs(last - first);
   const liquidityAdjustedMove =
     move * Math.log10(Math.max(10, market.liquidity));
@@ -88,9 +94,21 @@ function scoreCrossMarket(
     return { score: 0, reason: "no same-category peer markets supplied" };
   }
 
+  const referencePrices = peers
+    .map(peer => getClobReferencePrice(peer))
+    .filter(Number.isFinite);
+  const marketReference = getClobReferencePrice(market);
+  if (!Number.isFinite(marketReference) || referencePrices.length === 0) {
+    return {
+      score: 0,
+      reason: "invalid peer or market CLOB reference price",
+    };
+  }
+
   const peerAverage =
-    peers.reduce((sum, peer) => sum + peer.midpoint, 0) / peers.length;
-  const gap = Math.abs(market.midpoint - peerAverage);
+    referencePrices.reduce((sum, price) => sum + price, 0) /
+    referencePrices.length;
+  const gap = Math.abs(marketReference - peerAverage);
   return {
     score: clamp01(gap / 0.18),
     reason: `category peer price gap ${(gap * 100).toFixed(2)}pp`,
@@ -119,7 +137,10 @@ function scoreWhaleBehavior(
     };
   }
 
-  const gap = Math.abs(decision.estimatedProbability - market.midpoint);
+  const referencePrice = getClobReferencePrice(market);
+  const gap = Number.isFinite(referencePrice)
+    ? Math.abs(decision.estimatedProbability - referencePrice)
+    : 0;
   const turnover = market.volume24h / Math.max(1, market.liquidity);
   const suppressionSignal = gap * Math.log10(Math.max(1, turnover + 1));
   return {

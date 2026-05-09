@@ -1,4 +1,5 @@
 import type { AgentMarket, TradeIntent } from "./types";
+import { getClobSpreadBps } from "./book-pricing";
 
 export interface ExecutionMicrostructureProfile {
   spreadBps: number;
@@ -21,8 +22,7 @@ export function computeExecutionMicrostructureProfile(
   market: AgentMarket,
   now = new Date()
 ): ExecutionMicrostructureProfile {
-  const spreadBps =
-    market.midpoint > 0 ? (market.spread / market.midpoint) * 10_000 : 0;
+  const spreadBps = getClobSpreadBps(market);
   const depthUsd = computeDepthUsd(market);
   const ageSeconds =
     (now.getTime() - market.orderbookUpdatedAt.getTime()) / 1_000;
