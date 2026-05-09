@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { buildPortfolioSnapshot, mapClobOpenOrder, reconcilePortfolio } from "./reconciliation";
-import type { ExchangePortfolioState, LocalPortfolioState } from "./reconciliation";
+import {
+  buildPortfolioSnapshot,
+  mapClobOpenOrder,
+  reconcilePortfolio,
+} from "./reconciliation";
+import type {
+  ExchangePortfolioState,
+  LocalPortfolioState,
+} from "./reconciliation";
 
 const local: LocalPortfolioState = {
   bankrollUsd: 1000,
@@ -60,24 +67,30 @@ describe("portfolio reconciliation", () => {
     const result = reconcilePortfolio(local, { ...exchange, openOrders: [] });
 
     expect(result.status).toBe("mismatch");
-    expect(result.issues.map((issue) => issue.code)).toContain("LOCAL_PENDING_ORDER_NOT_ON_EXCHANGE");
+    expect(result.issues.map(issue => issue.code)).toContain(
+      "LOCAL_PENDING_ORDER_NOT_ON_EXCHANGE"
+    );
   });
 
   it("detects exchange open orders missing locally", () => {
     const result = reconcilePortfolio({ ...local, orders: [] }, exchange);
 
     expect(result.status).toBe("mismatch");
-    expect(result.issues.map((issue) => issue.code)).toContain("EXCHANGE_ORDER_NOT_LOCAL");
+    expect(result.issues.map(issue => issue.code)).toContain(
+      "EXCHANGE_ORDER_NOT_LOCAL"
+    );
   });
 
   it("detects price and size mismatches", () => {
     const result = reconcilePortfolio(local, {
       ...exchange,
-      openOrders: [{ ...exchange.openOrders[0]!, price: 0.55, originalSizeUsd: 120 }],
+      openOrders: [
+        { ...exchange.openOrders[0]!, price: 0.55, originalSizeUsd: 120 },
+      ],
     });
 
     expect(result.status).toBe("mismatch");
-    expect(result.issues.map((issue) => issue.code)).toEqual(
+    expect(result.issues.map(issue => issue.code)).toEqual(
       expect.arrayContaining(["ORDER_PRICE_MISMATCH", "ORDER_SIZE_MISMATCH"])
     );
   });

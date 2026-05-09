@@ -1,8 +1,23 @@
-import { getBotConfig, updateBotConfig, insertEquitySnapshot, getLatestEquitySnapshot, insertSignal, getRecentSignals, getOpenOrders } from "./db";
+import {
+  getBotConfig,
+  updateBotConfig,
+  insertEquitySnapshot,
+  getLatestEquitySnapshot,
+  insertSignal,
+  getRecentSignals,
+  getOpenOrders,
+} from "./db";
 import { ingestMarketData, getMarketData, isOrderbookStale } from "./ingestion";
 import { assembleEnsemble } from "./intelligence";
-import { computeEdge, computeKellySize, checkRisk, computeDrawdown, shouldTriggerEmergencyBrake } from "./strategy";
+import {
+  computeEdge,
+  computeKellySize,
+  checkRisk,
+  computeDrawdown,
+  shouldTriggerEmergencyBrake,
+} from "./strategy";
 import { placeGTCLimitOrder, cancelOrder, isOrderExpired } from "./execution";
+import { notifyOwner } from "./_core/notification";
 import type { OrderbookSnapshot } from "./ingestion";
 
 /**
@@ -51,11 +66,15 @@ export class BotEngine {
     this.emergencyBrakeTriggered = false;
 
     console.log(`[Bot] Starting in ${this.executionMode} mode`);
-    await updateBotConfig({ isRunning: 1, isPaused: 0, emergencyBrakeTriggered: 0 });
+    await updateBotConfig({
+      isRunning: 1,
+      isPaused: 0,
+      emergencyBrakeTriggered: 0,
+    });
 
     // Start polling loop
     this.pollingInterval = setInterval(() => {
-      this.tick().catch((error) => console.error("[Bot] Tick error:", error));
+      this.tick().catch(error => console.error("[Bot] Tick error:", error));
     }, this.config.pollingIntervalSeconds * 1000);
 
     // Run first tick immediately
@@ -117,7 +136,10 @@ export class BotEngine {
 
     try {
       // 1. Fetch eligible markets
-      const markets = await ingestMarketData(this.config.minVolume24h, this.config.maxSpread);
+      const markets = await ingestMarketData(
+        this.config.minVolume24h,
+        this.config.maxSpread
+      );
       console.log(`[Bot] Fetched ${markets.length} eligible markets`);
 
       // 2. For each market, run the decision pipeline
@@ -149,10 +171,17 @@ export class BotEngine {
 
       // Get recent signals
       const signals = await getRecentSignals(marketId, 5);
-      const signalText = signals.map((s) => `${s.source}: ${s.content}`).join("\n");
+      const signalText = signals
+        .map(s => `${s.source}: ${s.content}`)
+        .join("\n");
 
       // Assemble ensemble probability
-      const ensemble = await assembleEnsemble(market.question, signalText, [], 0.5);
+      const ensemble = await assembleEnsemble(
+        market.question,
+        signalText,
+        [],
+        0.5
+      );
       if (!ensemble) {
         console.log(`[Bot] Invalid ensemble output for ${marketId}, skipping`);
         return;
@@ -169,18 +198,26 @@ export class BotEngine {
       // Check edge threshold
       const maxEdge = Math.max(buyEdge, sellEdge);
       if (maxEdge < this.config.edgeThreshold) {
-        console.log(`[Bot] Edge ${maxEdge.toFixed(4)} below threshold for ${marketId}`);
+        console.log(
+          `[Bot] Edge ${maxEdge.toFixed(4)} below threshold for ${marketId}`
+        );
         return;
       }
 
       // Check confidence
       if (ensemble.finalConfidence < this.config.minConfidence) {
-        console.log(`[Bot] Confidence ${ensemble.finalConfidence.toFixed(2)} below minimum for ${marketId}`);
+        console.log(
+          `[Bot] Confidence ${ensemble.finalConfidence.toFixed(2)} below minimum for ${marketId}`
+        );
         return;
       }
 
       // Compute Kelly size
-      const kellySize = computeKellySize(ensemble.finalProbability, 1, this.config.kellyFraction);
+      const kellySize = computeKellySize(
+        ensemble.finalProbability,
+        1,
+        this.config.kellyFraction
+      );
 
       // Risk check
       const drawdown = computeDrawdown(this.currentBalance, this.peakBalance);
@@ -198,7 +235,12 @@ export class BotEngine {
         console.log(`[Bot] Risk check failed: ${riskCheck.reason}`);
 
         // Check if emergency brake triggered
-        if (shouldTriggerEmergencyBrake({ currentDrawdown: drawdown, drawdownLimit: this.config.drawdownLimit })) {
+        if (
+          shouldTriggerEmergencyBrake({
+            currentDrawdown: drawdown,
+            drawdownLimit: this.config.drawdownLimit,
+          })
+        ) {
           await this.triggerEmergencyBrake();
         }
         return;
@@ -221,7 +263,8 @@ export class BotEngine {
 
       if (orderResult.status === "pending") {
         console.log(`[Bot] Order placed: ${orderResult.nonce}`);
-        this.currentExposure += (riskCheck.maxPositionSize / this.currentBalance) * 100;
+        this.currentExposure +=
+          (riskCheck.maxPositionSize / this.currentBalance) * 100;
       } else {
         console.log(`[Bot] Order failed: ${orderResult.reason}`);
       }
@@ -236,7 +279,13 @@ export class BotEngine {
   private async checkOrderTimeouts(): Promise<void> {
     const openOrders = await getOpenOrders();
     for (const order of openOrders) {
-      if (isOrderExpired({ nonce: order.nonce, placedAt: order.placedAt, timeoutSeconds: this.config.orderTimeoutSeconds })) {
+      if (
+        isOrderExpired({
+          nonce: order.nonce,
+          placedAt: order.placedAt,
+          timeoutSeconds: this.config.orderTimeoutSeconds,
+        })
+      ) {
         console.log(`[Bot] Order ${order.nonce} expired, cancelling`);
         await cancelOrder(order.nonce, this.executionMode);
       }
@@ -272,8 +321,17 @@ export class BotEngine {
     // Update config
     await updateBotConfig({ emergencyBrakeTriggered: 1 });
 
-    // TODO: Send owner notification
-    console.log("[Bot] Owner notification sent (stubbed)");
+    try {
+      const sent = await notifyOwner({
+        title: "Polymarket bot emergency brake triggered",
+        content: `The bot stopped trading after drawdown reached ${computeDrawdown(this.currentBalance, this.peakBalance).toFixed(2)}%. Open orders were cancelled in ${this.executionMode} mode.`,
+      });
+      console.log(
+        `[Bot] Owner notification ${sent ? "accepted" : "not accepted by notification service"}`
+      );
+    } catch (error) {
+      console.warn("[Bot] Owner notification unavailable:", error);
+    }
   }
 
   /**

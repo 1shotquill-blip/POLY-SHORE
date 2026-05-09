@@ -19,9 +19,14 @@ export function mapDbOrderToLocalOrder(order: Order): LocalOrderState {
 }
 
 export async function readLocalPortfolioState(): Promise<LocalPortfolioState> {
-  const [openOrders, latestEquity] = await Promise.all([getReconcilableOrders(), getLatestEquitySnapshot()]);
+  const [openOrders, latestEquity] = await Promise.all([
+    getReconcilableOrders(),
+    getLatestEquitySnapshot(),
+  ]);
   const bankrollUsd = latestEquity ? Number(latestEquity.balance) : 0;
-  const peakBankrollUsd = latestEquity ? Number(latestEquity.peakBalance) : bankrollUsd;
+  const peakBankrollUsd = latestEquity
+    ? Number(latestEquity.peakBalance)
+    : bankrollUsd;
 
   return {
     bankrollUsd,

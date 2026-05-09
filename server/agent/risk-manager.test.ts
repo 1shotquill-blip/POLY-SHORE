@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_RISK_LIMITS, computeBinaryKellyFraction, evaluateRisk } from "./risk-manager";
+import {
+  DEFAULT_RISK_LIMITS,
+  computeBinaryKellyFraction,
+  evaluateRisk,
+} from "./risk-manager";
 import type { AgentMarket, EnsembleDecision, PortfolioSnapshot } from "./types";
 
 const freshMarket: AgentMarket = {
@@ -47,7 +51,12 @@ describe("production risk manager", () => {
   });
 
   it("allows a trade only when every hard gate passes", () => {
-    const decision = evaluateRisk(freshMarket, ensemble, cleanPortfolio, DEFAULT_RISK_LIMITS);
+    const decision = evaluateRisk(
+      freshMarket,
+      ensemble,
+      cleanPortfolio,
+      DEFAULT_RISK_LIMITS
+    );
     expect(decision.allowed).toBe(true);
     expect(decision.intent?.side).toBe("buy");
     expect(decision.intent?.limitPrice).toBe(freshMarket.bestAsk);
@@ -58,20 +67,37 @@ describe("production risk manager", () => {
       ...freshMarket,
       orderbookUpdatedAt: new Date(Date.now() - 30_000),
     };
-    const decision = evaluateRisk(staleMarket, ensemble, cleanPortfolio, DEFAULT_RISK_LIMITS);
+    const decision = evaluateRisk(
+      staleMarket,
+      ensemble,
+      cleanPortfolio,
+      DEFAULT_RISK_LIMITS
+    );
     expect(decision.allowed).toBe(false);
     expect(decision.reasons).toContain("market data is stale");
   });
 
   it("blocks trades when reconciliation is unknown", () => {
-    const decision = evaluateRisk(freshMarket, ensemble, { ...cleanPortfolio, reconciliationStatus: "unknown" }, DEFAULT_RISK_LIMITS);
+    const decision = evaluateRisk(
+      freshMarket,
+      ensemble,
+      { ...cleanPortfolio, reconciliationStatus: "unknown" },
+      DEFAULT_RISK_LIMITS
+    );
     expect(decision.allowed).toBe(false);
     expect(decision.reasons).toContain("portfolio reconciliation is not clean");
   });
 
   it("blocks when confidence is too low even if edge is positive", () => {
-    const decision = evaluateRisk(freshMarket, { ...ensemble, confidence: 0.4 }, cleanPortfolio, DEFAULT_RISK_LIMITS);
+    const decision = evaluateRisk(
+      freshMarket,
+      { ...ensemble, confidence: 0.4 },
+      cleanPortfolio,
+      DEFAULT_RISK_LIMITS
+    );
     expect(decision.allowed).toBe(false);
-    expect(decision.reasons.some((reason) => reason.startsWith("confidence"))).toBe(true);
+    expect(
+      decision.reasons.some(reason => reason.startsWith("confidence"))
+    ).toBe(true);
   });
 });

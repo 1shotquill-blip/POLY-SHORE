@@ -11,7 +11,13 @@ export interface LocalOrderState {
   price: number;
   sizeUsd: number;
   matchedSizeUsd: number;
-  status: "pending" | "partially_filled" | "filled" | "cancelled" | "expired" | "rejected";
+  status:
+    | "pending"
+    | "partially_filled"
+    | "filled"
+    | "cancelled"
+    | "expired"
+    | "rejected";
   category?: string;
 }
 
@@ -100,19 +106,33 @@ export function buildPortfolioSnapshot(
   const categoryExposureUsd: Record<string, number> = {};
 
   for (const position of exchange.positions) {
-    marketExposureUsd[position.marketId] = (marketExposureUsd[position.marketId] ?? 0) + Math.max(0, position.currentValueUsd);
+    marketExposureUsd[position.marketId] =
+      (marketExposureUsd[position.marketId] ?? 0) +
+      Math.max(0, position.currentValueUsd);
     if (position.category) {
-      categoryExposureUsd[position.category] = (categoryExposureUsd[position.category] ?? 0) + Math.max(0, position.currentValueUsd);
+      categoryExposureUsd[position.category] =
+        (categoryExposureUsd[position.category] ?? 0) +
+        Math.max(0, position.currentValueUsd);
     }
   }
 
   for (const order of exchange.openOrders) {
-    const remainingUsd = Math.max(0, order.originalSizeUsd - order.matchedSizeUsd);
-    marketExposureUsd[order.marketId] = (marketExposureUsd[order.marketId] ?? 0) + remainingUsd;
+    const remainingUsd = Math.max(
+      0,
+      order.originalSizeUsd - order.matchedSizeUsd
+    );
+    marketExposureUsd[order.marketId] =
+      (marketExposureUsd[order.marketId] ?? 0) + remainingUsd;
   }
 
-  const openExposureUsd = Object.values(marketExposureUsd).reduce((sum, value) => sum + value, 0);
-  const positionsValueUsd = exchange.positions.reduce((sum, position) => sum + Math.max(0, position.currentValueUsd), 0);
+  const openExposureUsd = Object.values(marketExposureUsd).reduce(
+    (sum, value) => sum + value,
+    0
+  );
+  const positionsValueUsd = exchange.positions.reduce(
+    (sum, position) => sum + Math.max(0, position.currentValueUsd),
+    0
+  );
   const bankrollUsd = exchange.cashUsd + positionsValueUsd;
 
   return {
@@ -133,7 +153,9 @@ export function reconcilePortfolio(
   tolerances: ReconciliationTolerances = DEFAULT_RECONCILIATION_TOLERANCES
 ): ReconciliationResult {
   const issues: ReconciliationIssue[] = [];
-  const exchangeById = new Map(exchange.openOrders.map((order) => [order.exchangeOrderId, order]));
+  const exchangeById = new Map(
+    exchange.openOrders.map(order => [order.exchangeOrderId, order])
+  );
   const localOpenOrders = local.orders.filter(isOpenLocalOrder);
   const localExchangeIds = new Set<string>();
 
@@ -171,7 +193,13 @@ export function reconcilePortfolio(
       continue;
     }
 
-    if (!approximatelyEqual(localOrder.price, exchangeOrder.price, tolerances.priceTolerance)) {
+    if (
+      !approximatelyEqual(
+        localOrder.price,
+        exchangeOrder.price,
+        tolerances.priceTolerance
+      )
+    ) {
       issues.push({
         severity: "critical",
         code: "ORDER_PRICE_MISMATCH",
@@ -182,7 +210,13 @@ export function reconcilePortfolio(
       });
     }
 
-    if (!approximatelyEqual(localOrder.sizeUsd, exchangeOrder.originalSizeUsd, tolerances.sizeToleranceUsd)) {
+    if (
+      !approximatelyEqual(
+        localOrder.sizeUsd,
+        exchangeOrder.originalSizeUsd,
+        tolerances.sizeToleranceUsd
+      )
+    ) {
       issues.push({
         severity: "critical",
         code: "ORDER_SIZE_MISMATCH",
@@ -193,7 +227,13 @@ export function reconcilePortfolio(
       });
     }
 
-    if (!approximatelyEqual(localOrder.matchedSizeUsd, exchangeOrder.matchedSizeUsd, tolerances.sizeToleranceUsd)) {
+    if (
+      !approximatelyEqual(
+        localOrder.matchedSizeUsd,
+        exchangeOrder.matchedSizeUsd,
+        tolerances.sizeToleranceUsd
+      )
+    ) {
       issues.push({
         severity: "warning",
         code: "ORDER_MATCHED_SIZE_MISMATCH",
@@ -217,7 +257,7 @@ export function reconcilePortfolio(
     }
   }
 
-  const hasCriticalIssue = issues.some((issue) => issue.severity === "critical");
+  const hasCriticalIssue = issues.some(issue => issue.severity === "critical");
   const status = hasCriticalIssue ? "mismatch" : "ok";
 
   return {
@@ -227,7 +267,9 @@ export function reconcilePortfolio(
   };
 }
 
-export function mapClobOpenOrder(raw: Record<string, unknown>): ExchangeOpenOrderState {
+export function mapClobOpenOrder(
+  raw: Record<string, unknown>
+): ExchangeOpenOrderState {
   return {
     exchangeOrderId: String(raw.id ?? ""),
     marketId: String(raw.market ?? ""),

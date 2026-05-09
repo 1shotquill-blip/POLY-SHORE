@@ -40,10 +40,12 @@ export function computeBrierScore(trades: SettledTrade[]): number {
   return total / trades.length;
 }
 
-export function summarizePerformance(trades: SettledTrade[]): PerformanceSummary {
+export function summarizePerformance(
+  trades: SettledTrade[]
+): PerformanceSummary {
   const pnls = trades.map(computeTradePnlUsd);
-  const wins = pnls.filter((pnl) => pnl > 0);
-  const losses = pnls.filter((pnl) => pnl < 0);
+  const wins = pnls.filter(pnl => pnl > 0);
+  const losses = pnls.filter(pnl => pnl < 0);
   const realizedPnlUsd = pnls.reduce((sum, pnl) => sum + pnl, 0);
   const grossWins = wins.reduce((sum, pnl) => sum + pnl, 0);
   const grossLosses = Math.abs(losses.reduce((sum, pnl) => sum + pnl, 0));
@@ -56,7 +58,12 @@ export function summarizePerformance(trades: SettledTrade[]): PerformanceSummary
     realizedPnlUsd,
     averageWinUsd: wins.length > 0 ? grossWins / wins.length : 0,
     averageLossUsd: losses.length > 0 ? grossLosses / losses.length : 0,
-    profitFactor: grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? Number.POSITIVE_INFINITY : 0,
+    profitFactor:
+      grossLosses > 0
+        ? grossWins / grossLosses
+        : grossWins > 0
+          ? Number.POSITIVE_INFINITY
+          : 0,
     brierScore: computeBrierScore(trades),
   };
 }

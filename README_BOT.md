@@ -5,24 +5,28 @@ A fully autonomous, risk-managed software agent that trades on Polymarket using 
 ## Features
 
 ### Core Intelligence
+
 - **LLM Ensemble**: Local Ollama LLM for probability estimation with structured JSON output validation
 - **Sentiment Analysis**: Weighted aggregation of sentiment signals from news and social media
 - **Bayesian Updating**: Combines prior probabilities with LLM and sentiment signals
 - **Invalid Output Guard**: Strict validation; malformed LLM output results in immediate trade skip
 
 ### Risk Management
+
 - **Fractional Kelly Criterion**: Position sizing capped at 0.5 for safety
 - **Multi-Level Exposure Limits**: Single-market (5%) and total (30%) exposure caps
 - **Drawdown Monitor**: Emergency brake at 15% drawdown with owner notification
 - **Order Lifecycle Management**: GTC limit orders only, 30-second timeout re-evaluation
 
 ### Execution
+
 - **Paper & Live Modes**: Test strategies risk-free before live trading
 - **Nonce Tracking**: Unique order identifiers for full lifecycle tracking
 - **Graceful Shutdown**: Cancels all open orders on stop
 - **Pause/Resume**: Global pause with emergency brake recovery
 
 ### Monitoring & Control
+
 - **Real-Time Dashboard**: Live equity curve, open orders, recent trades, risk metrics
 - **tRPC Procedures**: CLI-equivalent endpoints for bot control and data retrieval
 - **Prometheus Metrics**: Equity, edge, orders, trades, exposure tracking
@@ -68,6 +72,7 @@ A fully autonomous, risk-managed software agent that trades on Polymarket using 
 ## Quick Start
 
 ### Prerequisites
+
 - Node.js 18+
 - MySQL 8.0+ or compatible
 - Ollama with llama3:70b model (or compatible)
@@ -96,13 +101,19 @@ Access dashboard at `http://localhost:3000/dashboard`
 ### Configuration
 
 Key environment variables:
+
 ```bash
 DATABASE_URL=mysql://user:pass@localhost/polymarket
-POLYMARKET_PRIVATE_KEY=<hex-key-no-0x>
 OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=llama3:70b
-EXECUTION_MODE=paper  # or 'live'
+OLLAMA_MODEL=llama3.1:8b
+LIVE_TRADING_ENABLED=false
+KILLSWITCH_ARMED=false
 ```
+
+Live trading requires the Polymarket CLOB v2 configuration in
+[`.env.example`](./.env.example). Keep `LIVE_TRADING_ENABLED=false` and
+`KILLSWITCH_ARMED=false` until the wallet, funder address, Polygon RPC, L2 API
+credentials or credential cache key, allowances, and dry-run checks are complete.
 
 ## Usage
 
@@ -126,7 +137,7 @@ await trpc.bot.pause.mutate();
 await trpc.bot.resume.mutate();
 
 // Set execution mode
-await trpc.bot.setExecutionMode.mutate({ mode: 'live' });
+await trpc.bot.setExecutionMode.mutate({ mode: "live" });
 
 // Retrieve data
 const trades = await trpc.bot.recentTrades.query({ limit: 20 });
@@ -144,29 +155,34 @@ await trpc.bot.updateConfig.mutate({
 ## Core Modules
 
 ### `server/intelligence.ts`
+
 - `runLLMEnsemble()`: Call Ollama with structured prompt, validate JSON
 - `aggregateSentiment()`: Weighted sentiment aggregation
 - `bayesianUpdate()`: Combine prior with LLM and sentiment
 - `assembleEnsemble()`: Full signal assembly pipeline
 
 ### `server/strategy.ts`
+
 - `computeEdge()`: Calculate buy/sell edge vs market price
 - `computeKellySize()`: Fractional Kelly sizing (capped at 0.5)
 - `checkRisk()`: Validate against exposure and drawdown limits
 - `shouldTriggerEmergencyBrake()`: Check drawdown threshold
 
 ### `server/execution.ts`
-- `placeGTCLimitOrder()`: Place GTC limit orders (paper/live)
+
+- `placeGTCLimitOrder()`: Place GTC limit orders in paper mode or via the fail-closed Polymarket CLOB v2 adapter in live mode
 - `cancelOrder()`: Cancel open orders
 - `isOrderExpired()`: Check 30-second timeout
 - `generateNonce()`: Unique order identifiers
 
 ### `server/ingestion.ts`
+
 - `fetchEligibleMarkets()`: Query Gamma API, filter by volume/spread
 - `cacheMarketData()`: Store market data in database
 - `isOrderbookStale()`: Validate orderbook freshness (>10s = stale)
 
 ### `server/bot-engine.ts`
+
 - `BotEngine` class: Main polling loop (15-second ticks)
 - Orchestrates full trading cycle: fetch → analyze → execute
 - Handles pause/resume, emergency brake, graceful shutdown
@@ -174,6 +190,7 @@ await trpc.bot.updateConfig.mutate({
 ## Database Schema
 
 ### Core Tables
+
 - `markets`: Tracked Polymarket markets with orderbook snapshots
 - `signals`: External signals (news, sentiment, tweets)
 - `orders`: All orders placed (pending, filled, cancelled)
@@ -196,6 +213,7 @@ pnpm test --watch
 ```
 
 Test coverage includes:
+
 - Edge computation and Kelly sizing
 - Risk management and emergency brake
 - Sentiment aggregation and Bayesian updating
@@ -212,7 +230,7 @@ Test coverage includes:
 ✓ **15-Second Polling**: Fixed cycle interval  
 ✓ **30-Second Order Timeout**: Re-evaluation window  
 ✓ **Private Key in Env Only**: Never in config/logs  
-✓ **Stale Orderbooks Discarded**: >10 seconds = skip  
+✓ **Stale Orderbooks Discarded**: >10 seconds = skip
 
 ## Deployment
 
@@ -234,6 +252,7 @@ sudo systemctl start polymarket-bot
 ## Monitoring
 
 ### Dashboard Metrics
+
 - Equity curve with peak/drawdown
 - Open positions with edge and confidence
 - Recent trades with fill status
@@ -241,6 +260,7 @@ sudo systemctl start polymarket-bot
 - Bot status (running/paused/emergency)
 
 ### Prometheus Metrics
+
 - `bot_equity`: Current balance
 - `bot_drawdown`: Current drawdown %
 - `bot_exposure_total`: Total exposure %
@@ -249,6 +269,7 @@ sudo systemctl start polymarket-bot
 - `bot_average_edge`: Mean edge at execution
 
 ### Logs
+
 - Location: `.manus-logs/` directory
 - Levels: DEBUG, INFO, WARN, ERROR
 - Format: JSON with ISO timestamps
@@ -282,6 +303,7 @@ Before live trading:
 ## Troubleshooting
 
 ### Bot not starting
+
 ```bash
 # Check database
 mysql -h localhost -u user -p polymarket -e "SELECT 1"
@@ -294,12 +316,14 @@ tail -f .manus-logs/devserver.log
 ```
 
 ### Orders not placing
+
 - Verify execution mode (paper/live)
 - Check edge threshold vs market prices
 - Verify Polymarket API connectivity
 - Check private key format (hex, no 0x)
 
 ### High latency
+
 - Check Ollama inference time
 - Monitor database query performance
 - Consider increasing polling interval
@@ -307,6 +331,7 @@ tail -f .manus-logs/devserver.log
 ## Contributing
 
 Contributions welcome! Please:
+
 1. Fork the repository
 2. Create a feature branch
 3. Add tests for new functionality

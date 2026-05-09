@@ -1,6 +1,13 @@
 import { nanoid } from "nanoid";
-import { insertOrder, updateOrderStatus } from "./db";
+import {
+  getOrderByNonce,
+  insertOrder,
+  updateOrderStatus,
+  updateOrderSyncState,
+} from "./db";
+import { PolymarketAdapter } from "./exchange/polymarket";
 import type { InsertOrder } from "../drizzle/schema";
+import type { AgentMarket, TradeIntent } from "./agent/types";
 
 /**
  * Execution Layer: Order placement, lifecycle management, and nonce tracking
@@ -19,6 +26,7 @@ export interface OrderPlacementInput {
 export interface OrderPlacementOutput {
   nonce: string;
   orderId?: number;
+  exchangeOrderId?: string;
   status: "pending" | "error";
   reason?: string;
 }
@@ -30,10 +38,64 @@ export function generateNonce(): string {
   return `${Date.now()}-${nanoid(8)}`;
 }
 
+function toTradeIntent(input: OrderPlacementInput): TradeIntent {
+  return {
+    marketId: input.marketId,
+    tokenId: input.tokenId,
+    outcome: "yes",
+    side: input.side,
+    limitPrice: input.price,
+    sizeUsd: input.size * input.price,
+    edge: input.edgeAtPlacement,
+    estimatedProbability: input.confidenceAtPlacement,
+    confidence: input.confidenceAtPlacement,
+    rationale: ["legacy execution facade"],
+  };
+}
+
+function toAgentMarket(input: OrderPlacementInput): AgentMarket {
+  return {
+    marketId: input.marketId,
+    question: input.marketId,
+    yesTokenId: input.tokenId,
+    noTokenId: "",
+    bestBid:
+      input.side === "sell" ? input.price : Math.max(0, input.price - 0.01),
+    bestAsk:
+      input.side === "buy" ? input.price : Math.min(1, input.price + 0.01),
+    spread: 0.01,
+    midpoint: input.price,
+    volume24h: 0,
+    liquidity: 0,
+    expiresAt: new Date(Date.now() + 86_400_000),
+    orderbookUpdatedAt: new Date(),
+  };
+}
+
+function orderToTradeIntent(
+  order: Awaited<ReturnType<typeof getOrderByNonce>>
+): TradeIntent | null {
+  if (!order) return null;
+  const price = Number(order.price);
+  const tokenSize = Number(order.size);
+  return {
+    marketId: order.marketId,
+    tokenId: order.tokenId,
+    outcome: "yes",
+    side: order.side,
+    limitPrice: price,
+    sizeUsd: tokenSize * price,
+    edge: Number(order.edgeAtPlacement ?? 0),
+    estimatedProbability: Number(order.confidenceAtPlacement ?? 0),
+    confidence: Number(order.confidenceAtPlacement ?? 0),
+    rationale: ["legacy execution facade"],
+  };
+}
+
 /**
  * Place a GTC (Good-Till-Cancelled) limit order
- * In paper mode: simulate placement
- * In live mode: call Polymarket CLOB API (stubbed)
+ * In paper mode: persist a pending limit order for local lifecycle tracking.
+ * In live mode: delegate to the fail-closed Polymarket CLOB adapter.
  */
 export async function placeGTCLimitOrder(
   input: OrderPlacementInput,
@@ -51,15 +113,6 @@ export async function placeGTCLimitOrder(
       };
     }
 
-    if (executionMode === "live") {
-      return {
-        nonce,
-        status: "error",
-        reason: "Live CLOB execution is disabled until signed order placement is implemented",
-      };
-    }
-
-    // Create order record
     const orderData: InsertOrder = {
       nonce,
       marketId: input.marketId,
@@ -73,11 +126,46 @@ export async function placeGTCLimitOrder(
       placedAt: new Date(),
     };
 
-    // Insert into database
+    if (executionMode === "live") {
+      const adapter = await PolymarketAdapter.create();
+      const receipt = await adapter.place(
+        toTradeIntent(input),
+        toAgentMarket(input)
+      );
+      if (receipt.status !== "exchange_accepted" || !receipt.exchangeOrderId) {
+        await insertOrder({
+          ...orderData,
+          status: "rejected",
+          lifecycleState: "REJECTED",
+          rejectionReason:
+            receipt.rejectionReason ?? "Polymarket rejected order",
+        });
+        return {
+          nonce,
+          status: "error",
+          reason: receipt.rejectionReason ?? "Polymarket rejected order",
+        };
+      }
+
+      await insertOrder({
+        ...orderData,
+        exchangeOrderId: receipt.exchangeOrderId,
+        lifecycleState: "ACCEPTED_BY_CLOB",
+        acceptedAt: receipt.submittedAt,
+        lastSyncedAt: receipt.submittedAt,
+      });
+      return {
+        nonce,
+        exchangeOrderId: receipt.exchangeOrderId,
+        status: "pending",
+      };
+    }
+
     await insertOrder(orderData);
 
-    // Paper mode: simulate successful placement
-    console.log(`[PAPER] Order placed: ${nonce} - ${input.side} ${input.size} @ ${input.price}`);
+    console.log(
+      `[PAPER] Order placed: ${nonce} - ${input.side} ${input.size} @ ${input.price}`
+    );
     return {
       nonce,
       status: "pending",
@@ -95,11 +183,27 @@ export async function placeGTCLimitOrder(
 /**
  * Cancel an order
  */
-export async function cancelOrder(nonce: string, executionMode: "paper" | "live"): Promise<boolean> {
+export async function cancelOrder(
+  nonce: string,
+  executionMode: "paper" | "live"
+): Promise<boolean> {
   try {
     if (executionMode === "live") {
-      console.error("[Execution] Refusing live cancel: CLOB cancellation adapter is not implemented");
-      return false;
+      const order = await getOrderByNonce(nonce);
+      if (!order?.exchangeOrderId) return false;
+      const intent = orderToTradeIntent(order);
+      if (!intent) return false;
+
+      await updateOrderStatus(nonce, "cancel_requested");
+      const adapter = await PolymarketAdapter.create();
+      adapter.trackExternalOrder(nonce, order.exchangeOrderId, intent);
+      const update = await adapter.cancel(nonce);
+      await updateOrderSyncState(nonce, {
+        matchedSize: update.matchedSizeUsd.toString(),
+        status: "cancelled",
+        lifecycleState: "CANCEL_CONFIRMED",
+      });
+      return update.status === "cancelled";
     }
 
     // Update database
@@ -113,15 +217,48 @@ export async function cancelOrder(nonce: string, executionMode: "paper" | "live"
 }
 
 /**
- * Monitor order fill status (placeholder for WebSocket/polling)
+ * Read local order fill state and sync live CLOB status when live mode is active.
  */
-export async function checkOrderFill(nonce: string, executionMode: "paper" | "live"): Promise<boolean> {
+export async function checkOrderFill(
+  nonce: string,
+  executionMode: "paper" | "live"
+): Promise<boolean> {
   try {
     if (executionMode === "live") {
-      // TODO: Poll Polymarket CLOB API or listen to WebSocket for fill status
+      const order = await getOrderByNonce(nonce);
+      if (!order?.exchangeOrderId) return false;
+      const intent = orderToTradeIntent(order);
+      if (!intent) return false;
+
+      const adapter = await PolymarketAdapter.create();
+      adapter.trackExternalOrder(nonce, order.exchangeOrderId, intent);
+      const update = await adapter.sync(
+        nonce,
+        toAgentMarket({
+          marketId: order.marketId,
+          tokenId: order.tokenId,
+          side: order.side,
+          price: Number(order.price),
+          size: Number(order.size),
+          edgeAtPlacement: Number(order.edgeAtPlacement ?? 0),
+          confidenceAtPlacement: Number(order.confidenceAtPlacement ?? 0),
+        })
+      );
+      await updateOrderSyncState(nonce, {
+        matchedSize: update.matchedSizeUsd.toString(),
+        status: update.status === "accepted" ? "pending" : update.status,
+        lifecycleState:
+          update.status === "filled"
+            ? "FILLED"
+            : update.status === "partially_filled"
+              ? "PARTIALLY_FILLED"
+              : "ACCEPTED_BY_CLOB",
+      });
+      return update.status === "filled";
     }
-    // In paper mode, simulate fill after random delay
-    return false;
+
+    const order = await getOrderByNonce(nonce);
+    return order?.status === "filled";
   } catch (error) {
     console.error("[Execution] Error checking order fill:", error);
     return false;

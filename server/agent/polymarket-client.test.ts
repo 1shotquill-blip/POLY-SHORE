@@ -106,6 +106,8 @@ describe("Polymarket market data client", () => {
     expect(markets).toHaveLength(1);
     expect(markets[0]?.bestBid).toBe(0.49);
     expect(markets[0]?.bestAsk).toBe(0.51);
-    expect(calls.some((url) => url.includes("/book?token_id=yes-token"))).toBe(true);
+    expect(calls.some(url => url.includes("/book?token_id=yes-token"))).toBe(
+      true
+    );
   });
 });

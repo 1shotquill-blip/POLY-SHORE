@@ -10,8 +10,16 @@ export type OrderLifecycleStatus =
   | "rejected";
 
 export interface ExecutionAdapter {
-  place(intent: TradeIntent, market: AgentMarket, now?: Date): Promise<ExecutionReceipt>;
-  sync(localOrderId: string, market: AgentMarket, now?: Date): Promise<OrderLifecycleUpdate>;
+  place(
+    intent: TradeIntent,
+    market: AgentMarket,
+    now?: Date
+  ): Promise<ExecutionReceipt>;
+  sync(
+    localOrderId: string,
+    market: AgentMarket,
+    now?: Date
+  ): Promise<OrderLifecycleUpdate>;
   cancel(localOrderId: string, now?: Date): Promise<OrderLifecycleUpdate>;
 }
 
@@ -47,7 +55,10 @@ export const DEFAULT_PAPER_EXECUTION_OPTIONS: PaperExecutionOptions = {
   partialFillRatio: 0.5,
 };
 
-export function isIntentImmediatelyMarketable(intent: TradeIntent, market: AgentMarket): boolean {
+export function isIntentImmediatelyMarketable(
+  intent: TradeIntent,
+  market: AgentMarket
+): boolean {
   if (intent.side === "buy") return intent.limitPrice >= market.bestAsk;
   return intent.limitPrice <= market.bestBid;
 }
@@ -64,5 +75,8 @@ export function computePaperFillSizeUsd(
   const liquidityCap = Math.max(0, market.liquidity * 0.02);
   const maxFill = Math.min(remainingSizeUsd, liquidityCap || remainingSizeUsd);
   if (maxFill >= remainingSizeUsd) return remainingSizeUsd;
-  return Math.max(0, Math.min(remainingSizeUsd, maxFill * options.partialFillRatio));
+  return Math.max(
+    0,
+    Math.min(remainingSizeUsd, maxFill * options.partialFillRatio)
+  );
 }

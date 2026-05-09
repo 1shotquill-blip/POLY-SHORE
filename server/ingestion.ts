@@ -1,4 +1,5 @@
 import { upsertMarket, getMarketByMarketId } from "./db";
+import { scanTradableMarkets } from "./agent/market-scanner";
 import type { InsertMarket } from "../drizzle/schema";
 
 /**
@@ -32,20 +33,45 @@ export async function fetchEligibleMarkets(
   maxSpread: number,
   minTimeToExpiry: number = 3600 // seconds
 ): Promise<GammaMarket[]> {
-  try {
-    // TODO: Implement actual Gamma API call
-    // const response = await fetch("https://gamma-api.polymarket.com/markets", {
-    //   headers: { "Content-Type": "application/json" },
-    // });
-    // const markets = await response.json();
+  const now = new Date();
+  const result = await scanTradableMarkets(
+    {
+      limit: 100,
+      minVolume24h: minVolume,
+    },
+    {
+      minEdge: 0,
+      minConfidence: 0,
+      maxSpread,
+      maxMarketDataAgeSeconds: 10,
+      maxModelDisagreement: 1,
+      maxSingleMarketExposurePct: 100,
+      maxCategoryExposurePct: 100,
+      maxTotalExposurePct: 100,
+      maxOrderSizeUsd: Number.MAX_SAFE_INTEGER,
+      maxDailyLossPct: 100,
+      maxDrawdownPct: 100,
+      maxOpenOrders: Number.MAX_SAFE_INTEGER,
+      liquidityParticipationLimitPct: 100,
+      fractionalKelly: 1,
+    },
+    now
+  );
 
-    // Stub: return empty array for now
-    console.log("[Ingestion] Fetching markets from Gamma API (stubbed)");
-    return [];
-  } catch (error) {
-    console.error("[Ingestion] Error fetching markets:", error);
-    return [];
-  }
+  return result.tradable
+    .filter(
+      market =>
+        (market.expiresAt.getTime() - now.getTime()) / 1000 >= minTimeToExpiry
+    )
+    .map(market => ({
+      id: market.marketId,
+      question: market.question,
+      category: market.category,
+      volume24h: market.volume24h,
+      bestBid: market.bestBid,
+      bestAsk: market.bestAsk,
+      expiresAt: market.expiresAt.toISOString(),
+    }));
 }
 
 /**
@@ -75,7 +101,7 @@ export function filterMarketsByThresholds(
   minVolume: number,
   maxSpread: number
 ): GammaMarket[] {
-  return markets.filter((m) => {
+  return markets.filter(m => {
     const spread = m.bestAsk - m.bestBid;
     return m.volume24h >= minVolume && spread <= maxSpread;
   });
@@ -84,7 +110,10 @@ export function filterMarketsByThresholds(
 /**
  * Check if orderbook is stale (>10 seconds old)
  */
-export function isOrderbookStale(snapshot: OrderbookSnapshot, maxAgeSeconds: number = 10): boolean {
+export function isOrderbookStale(
+  snapshot: OrderbookSnapshot,
+  maxAgeSeconds: number = 10
+): boolean {
   const ageSeconds = (Date.now() - snapshot.timestamp.getTime()) / 1000;
   return ageSeconds > maxAgeSeconds;
 }
@@ -92,7 +121,10 @@ export function isOrderbookStale(snapshot: OrderbookSnapshot, maxAgeSeconds: num
 /**
  * Fetch and cache all eligible markets
  */
-export async function ingestMarketData(minVolume: number, maxSpread: number): Promise<GammaMarket[]> {
+export async function ingestMarketData(
+  minVolume: number,
+  maxSpread: number
+): Promise<GammaMarket[]> {
   const markets = await fetchEligibleMarkets(minVolume, maxSpread);
   const filtered = filterMarketsByThresholds(markets, minVolume, maxSpread);
 
@@ -107,7 +139,9 @@ export async function ingestMarketData(minVolume: number, maxSpread: number): Pr
 /**
  * Get market data from cache
  */
-export async function getMarketData(marketId: string): Promise<GammaMarket | null> {
+export async function getMarketData(
+  marketId: string
+): Promise<GammaMarket | null> {
   const cached = await getMarketByMarketId(marketId);
   if (!cached) return null;
 

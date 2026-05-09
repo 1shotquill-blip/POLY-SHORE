@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { cancelOrder, placeGTCLimitOrder } from "./execution";
 
 describe("execution safety", () => {
-  it("does not pretend live order placement succeeded before CLOB execution is implemented", async () => {
+  it("does not pretend live order placement succeeded without live CLOB credentials", async () => {
     const result = await placeGTCLimitOrder(
       {
         marketId: "market-1",
@@ -17,7 +17,7 @@ describe("execution safety", () => {
     );
 
     expect(result.status).toBe("error");
-    expect(result.reason).toContain("Live CLOB execution is disabled");
+    expect(result.reason).toContain("POLYMARKET_PRIVATE_KEY");
   });
 
   it("does not mark live orders cancelled without CLOB confirmation", async () => {

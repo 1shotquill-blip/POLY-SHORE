@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createTickId, mapDecisionAuditToInsert, persistDecisionAudits } from "./audit-persistence";
+import {
+  createTickId,
+  mapDecisionAuditToInsert,
+  persistDecisionAudits,
+} from "./audit-persistence";
 import type { AgentDecisionAudit } from "./orchestrator";
 
 vi.mock("../db", () => ({
@@ -64,11 +68,20 @@ const audit: AgentDecisionAudit = {
     remainingSizeUsd: 0,
     updatedAt: new Date("2026-01-01T00:00:01Z"),
   },
+  selectionScore: {
+    total: 0.75,
+    edgeScore: 0.4,
+    confidenceScore: 0.8,
+    liquidityScore: 0.9,
+    timeRemainingScore: 1,
+  },
 };
 
 describe("decision audit persistence", () => {
   it("creates stable tick ids", () => {
-    expect(createTickId(new Date("2026-01-01T00:00:00Z"))).toMatch(/^tick-1767225600000-/);
+    expect(createTickId(new Date("2026-01-01T00:00:00Z"))).toMatch(
+      /^tick-1767225600000-/
+    );
   });
 
   it("maps orchestrator audits into DB insert shape", () => {
@@ -84,6 +97,7 @@ describe("decision audit persistence", () => {
       bestBid: "0.5",
       bestAsk: "0.52",
       spread: "0.02",
+      selectionScore: "0.75",
       orderNonce: "paper-1",
       exchangeOrderId: "paper-exchange-1",
       lifecycleStatus: "filled",
@@ -95,6 +109,8 @@ describe("decision audit persistence", () => {
 
     await persistDecisionAudits("tick-1", [audit]);
 
-    expect(db.insertDecisionAudits).toHaveBeenCalledWith([expect.objectContaining({ tickId: "tick-1" })]);
+    expect(db.insertDecisionAudits).toHaveBeenCalledWith([
+      expect.objectContaining({ tickId: "tick-1" }),
+    ]);
   });
 });

@@ -3,7 +3,10 @@ import type { InsertOrder } from "../../drizzle/schema";
 import type { OrderLifecycleUpdate } from "./execution-adapter";
 import type { ExecutionReceipt, TradeIntent } from "./types";
 
-export async function persistPaperOrderIntent(intent: TradeIntent, receipt: ExecutionReceipt): Promise<void> {
+export async function persistPaperOrderIntent(
+  intent: TradeIntent,
+  receipt: ExecutionReceipt
+): Promise<void> {
   if (receipt.status !== "paper_accepted" || !receipt.exchangeOrderId) {
     await updateOrderSyncState(receipt.localOrderId, {
       status: "rejected",
@@ -34,8 +37,12 @@ export async function persistPaperOrderIntent(intent: TradeIntent, receipt: Exec
   await insertOrder(order);
 }
 
-export async function persistLifecycleUpdate(update: OrderLifecycleUpdate, limitPrice: number): Promise<void> {
-  const matchedTokenSize = limitPrice > 0 ? update.matchedSizeUsd / limitPrice : 0;
+export async function persistLifecycleUpdate(
+  update: OrderLifecycleUpdate,
+  limitPrice: number
+): Promise<void> {
+  const matchedTokenSize =
+    limitPrice > 0 ? update.matchedSizeUsd / limitPrice : 0;
 
   if (update.status === "filled") {
     await updateOrderSyncState(update.localOrderId, {

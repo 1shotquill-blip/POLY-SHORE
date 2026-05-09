@@ -46,9 +46,28 @@ OLLAMA_MODEL=llama3:70b
 NEWSAPI_KEY=<your-newsapi-key>
 TWITTER_BEARER_TOKEN=<your-twitter-token>
 
-# Execution
-POLYMARKET_PRIVATE_KEY=<your-hex-private-key-no-0x>
-EXECUTION_MODE=paper
+# Live trading global gate
+LIVE_TRADING_ENABLED=false
+
+# Polymarket CLOB v2
+POLYMARKET_HOST=https://clob.polymarket.com
+POLYMARKET_CHAIN_ID=137
+POLYMARKET_PRIVATE_KEY=
+POLYMARKET_FUNDER_ADDRESS=
+POLYMARKET_SIGNATURE_TYPE=0
+POLYGON_RPC_URL=
+POLYMARKET_API_KEY=
+POLYMARKET_API_SECRET=
+POLYMARKET_API_PASSPHRASE=
+POLYMARKET_CREDENTIAL_CACHE_PATH=.polymarket-l2-credentials.enc
+POLYMARKET_CREDENTIAL_CACHE_KEY=
+
+# Live kill switch
+KILLSWITCH_ARMED=false
+KILLSWITCH_NOTIONAL_CAP_USD=500
+KILLSWITCH_ORDERS_PER_MIN=10
+KILLSWITCH_PER_MARKET_CAP_USD=100
+KILLSWITCH_MAX_SPREAD_BPS=500
 
 # Monitoring
 PROMETHEUS_PORT=8000
@@ -143,7 +162,17 @@ Access the configuration editor in the dashboard to adjust:
 ### Execution Modes
 
 - **Paper Mode**: Simulated trading, no real capital at risk
-- **Live Mode**: Real trading on Polymarket (requires private key)
+- **Live Mode**: Real trading through `@polymarket/clob-client-v2`. Live mode is blocked unless the readiness gate passes: `LIVE_TRADING_ENABLED=true`, wallet/funder/RPC are configured, direct L2 credentials or an encrypted credential cache key are present, and `KILLSWITCH_ARMED=true`.
+
+### Live Activation Checklist
+
+1. Keep `LIVE_TRADING_ENABLED=false` and `KILLSWITCH_ARMED=false`.
+2. Add `POLYMARKET_PRIVATE_KEY`, `POLYMARKET_FUNDER_ADDRESS`, and `POLYGON_RPC_URL`.
+3. Either add `POLYMARKET_API_KEY`, `POLYMARKET_API_SECRET`, and `POLYMARKET_API_PASSPHRASE`, or set `POLYMARKET_CREDENTIAL_CACHE_KEY` so the adapter can derive and cache L2 credentials.
+4. Confirm funds and allowances on Polygon.
+5. Set conservative kill-switch caps.
+6. Set `LIVE_TRADING_ENABLED=true`.
+7. Set `KILLSWITCH_ARMED=true` only for the live execution window.
 
 ## Monitoring
 
@@ -152,6 +181,7 @@ Access the configuration editor in the dashboard to adjust:
 Access the real-time dashboard at `http://localhost:3000/dashboard`
 
 Features:
+
 - Bot status and controls
 - Equity curve (24h)
 - Open orders table
@@ -163,6 +193,7 @@ Features:
 Metrics are exported at `http://localhost:8000/metrics`
 
 Key metrics:
+
 - `bot_equity`: Current balance in USDC
 - `bot_drawdown`: Current drawdown percentage
 - `bot_orders_placed`: Total orders placed
@@ -172,6 +203,7 @@ Key metrics:
 ### Logs
 
 Logs are written to:
+
 - Console (stdout/stderr)
 - File: `.manus-logs/` directory
 
@@ -216,9 +248,10 @@ pnpm format
 ### Orders not placing
 
 1. Verify execution mode: Check dashboard
-2. Check Polymarket API connectivity
-3. Verify private key format (hex, no 0x prefix)
-4. Check edge threshold vs current market prices
+2. Check the live readiness error returned by `bot.setExecutionMode`
+3. Check Polymarket API connectivity
+4. Verify private key format
+5. Check edge threshold vs current market prices
 
 ### High latency
 
@@ -279,6 +312,7 @@ CREATE INDEX idx_signals_timestamp ON signals(collectedAt);
 ### Alert Thresholds
 
 Consider setting up alerts for:
+
 - Drawdown > 10%
 - Average edge < 0.02
 - Order fill rate < 50%

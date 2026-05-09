@@ -34,15 +34,35 @@ const buyIntent: TradeIntent = {
 describe("paper execution adapter", () => {
   it("detects marketable buy and sell intents using executable bid/ask", () => {
     expect(isIntentImmediatelyMarketable(buyIntent, market)).toBe(true);
-    expect(isIntentImmediatelyMarketable({ ...buyIntent, limitPrice: 0.51 }, market)).toBe(false);
-    expect(isIntentImmediatelyMarketable({ ...buyIntent, side: "sell", limitPrice: 0.5 }, market)).toBe(true);
-    expect(isIntentImmediatelyMarketable({ ...buyIntent, side: "sell", limitPrice: 0.51 }, market)).toBe(false);
+    expect(
+      isIntentImmediatelyMarketable({ ...buyIntent, limitPrice: 0.51 }, market)
+    ).toBe(false);
+    expect(
+      isIntentImmediatelyMarketable(
+        { ...buyIntent, side: "sell", limitPrice: 0.5 },
+        market
+      )
+    ).toBe(true);
+    expect(
+      isIntentImmediatelyMarketable(
+        { ...buyIntent, side: "sell", limitPrice: 0.51 },
+        market
+      )
+    ).toBe(false);
   });
 
   it("accepts and fully fills marketable paper orders when visible liquidity is enough", async () => {
     const adapter = new PaperExecutionAdapter();
-    const receipt = await adapter.place(buyIntent, market, new Date("2026-01-01T00:00:00Z"));
-    const update = await adapter.sync(receipt.localOrderId, market, new Date("2026-01-01T00:00:01Z"));
+    const receipt = await adapter.place(
+      buyIntent,
+      market,
+      new Date("2026-01-01T00:00:00Z")
+    );
+    const update = await adapter.sync(
+      receipt.localOrderId,
+      market,
+      new Date("2026-01-01T00:00:01Z")
+    );
 
     expect(receipt.status).toBe("paper_accepted");
     expect(update.status).toBe("filled");
@@ -51,9 +71,15 @@ describe("paper execution adapter", () => {
   });
 
   it("partially fills when liquidity cap is smaller than order size", async () => {
-    const adapter = new PaperExecutionAdapter({ orderTtlMs: 30_000, partialFillRatio: 1 });
+    const adapter = new PaperExecutionAdapter({
+      orderTtlMs: 30_000,
+      partialFillRatio: 1,
+    });
     const thinMarket = { ...market, liquidity: 1000 };
-    const receipt = await adapter.place({ ...buyIntent, sizeUsd: 100 }, thinMarket);
+    const receipt = await adapter.place(
+      { ...buyIntent, sizeUsd: 100 },
+      thinMarket
+    );
     const update = await adapter.sync(receipt.localOrderId, thinMarket);
 
     expect(update.status).toBe("partially_filled");
@@ -62,10 +88,21 @@ describe("paper execution adapter", () => {
   });
 
   it("expires non-marketable paper orders after ttl", async () => {
-    const adapter = new PaperExecutionAdapter({ orderTtlMs: 1000, partialFillRatio: 1 });
+    const adapter = new PaperExecutionAdapter({
+      orderTtlMs: 1000,
+      partialFillRatio: 1,
+    });
     const now = new Date("2026-01-01T00:00:00Z");
-    const receipt = await adapter.place({ ...buyIntent, limitPrice: 0.51 }, market, now);
-    const update = await adapter.sync(receipt.localOrderId, market, new Date("2026-01-01T00:00:02Z"));
+    const receipt = await adapter.place(
+      { ...buyIntent, limitPrice: 0.51 },
+      market,
+      now
+    );
+    const update = await adapter.sync(
+      receipt.localOrderId,
+      market,
+      new Date("2026-01-01T00:00:02Z")
+    );
 
     expect(update.status).toBe("expired");
     expect(update.reason).toContain("expired");
@@ -73,7 +110,10 @@ describe("paper execution adapter", () => {
 
   it("cancels accepted paper orders", async () => {
     const adapter = new PaperExecutionAdapter();
-    const receipt = await adapter.place({ ...buyIntent, limitPrice: 0.51 }, market);
+    const receipt = await adapter.place(
+      { ...buyIntent, limitPrice: 0.51 },
+      market
+    );
     const update = await adapter.cancel(receipt.localOrderId);
 
     expect(update.status).toBe("cancelled");
