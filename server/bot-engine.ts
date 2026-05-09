@@ -12,6 +12,7 @@ import { LLMIntelligenceEngine } from "./agent/intelligence";
 import { ProductionDeepEdgeGate } from "./agent/deep-edge-gate";
 import { ClobPortfolioProvider } from "./agent/portfolio-provider";
 import { scanTradableMarkets } from "./agent/market-scanner";
+import { recoverOpenOrders } from "./agent/startup-recovery";
 import { createExecutionAdapter } from "./exchange/polymarket/index";
 import { DEFAULT_RISK_LIMITS } from "./agent/risk-manager";
 import type { ExecutionAdapter } from "./agent/execution-adapter";
@@ -61,6 +62,7 @@ export class BotEngine {
     }
 
     this.executionAdapter = await createExecutionAdapter();
+    await this.recoverExecutionState();
 
     const portfolioProvider = new ClobPortfolioProvider();
     const intelligence = new LLMIntelligenceEngine();
@@ -272,6 +274,33 @@ export class BotEngine {
           err
         );
       }
+    }
+  }
+
+  private async recoverExecutionState(): Promise<void> {
+    const { PolymarketAdapter } = await import("./exchange/polymarket/index");
+    if (!(this.executionAdapter instanceof PolymarketAdapter)) return;
+
+    const recovery = await recoverOpenOrders(
+      this.executionAdapter,
+      new Date(),
+      this.config.orderTtlMs
+    );
+    if (recovery.issues.length > 0) {
+      console.warn("[Bot] Startup recovery issues:", recovery.issues);
+    }
+
+    if (recovery.status !== "ok") {
+      await updateBotConfig({
+        isRunning: 0,
+        isPaused: 1,
+        emergencyBrakeTriggered: 1,
+      });
+      throw new Error(
+        `Startup recovery failed: ${recovery.issues
+          .map(issue => issue.message)
+          .join("; ")}`
+      );
     }
   }
 
