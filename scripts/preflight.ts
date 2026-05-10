@@ -168,30 +168,77 @@ await check("Kalshi: cash balance readable", async () => {
   return `$${(cents / 100).toFixed(2)} USD`;
 });
 
-// 8. LLM (OpenRouter / Grok) reachable
-await check("LLM: API reachable", async () => {
-  const grokKey = process.env.GROK_API_KEY;
-  const openrouterKey = process.env.OPENROUTER_API_KEY;
-  const key = grokKey || openrouterKey;
-  if (!key) throw new Error("No LLM API key configured (GROK_API_KEY or OPENROUTER_API_KEY)");
-
-  const url = grokKey
-    ? "https://api.x.ai/v1/chat/completions"
-    : "https://openrouter.ai/api/v1/chat/completions";
-  const model = grokKey ? (process.env.GROK_MODEL ?? "grok-3") : "openai/gpt-4o-mini";
-
-  const res = await fetch(url, {
+// Helper: call Ollama /api/chat and return content string
+async function ollamaPing(host: string, key: string, model: string, prompt: string): Promise<string> {
+  const res = await fetch(`${host.replace(/\/$/, "")}/api/chat`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
     body: JSON.stringify({
       model,
-      messages: [{ role: "user", content: "ping" }],
-      max_tokens: 5,
+      stream: false,
+      format: "json",
+      messages: [{ role: "user", content: prompt }],
     }),
   });
   if (!res.ok) {
     const txt = (await res.text()).slice(0, 200);
-    throw new Error(`LLM ${res.status}: ${txt}`);
+    throw new Error(`Ollama ${res.status} ${res.statusText}: ${txt}`);
+  }
+  const body = (await res.json()) as { message?: { content?: string }; model?: string };
+  const content = body.message?.content ?? "";
+  if (!content) throw new Error("Ollama returned empty content");
+  return `model=${body.model ?? model} content_len=${content.length}`;
+}
+
+// 8a. Ollama Cloud: extractor model (stage 1 — factor extraction)
+await check("LLM Ollama: extractor model (stage 1)", async () => {
+  const key = process.env.OLLAMA_API_KEY;
+  const host = process.env.OLLAMA_HOST ?? "https://ollama.com";
+  const model = process.env.LLM_EXTRACTOR_MODEL ?? "qwen3.5:27b";
+  if (!key) throw new Error("OLLAMA_API_KEY not set");
+  return await ollamaPing(
+    host, key, model,
+    'Return JSON: {"factors":["example factor"],"searchQueries":["example query"]}. Market: "Will the Fed cut rates in 2025?"'
+  );
+});
+
+// 8b. Ollama Cloud: primary model (stage 2 — probability estimation)
+await check("LLM Ollama: primary model (stage 2)", async () => {
+  const key = process.env.OLLAMA_API_KEY;
+  const host = process.env.OLLAMA_HOST ?? "https://ollama.com";
+  const model = process.env.LLM_PRIMARY_MODEL ?? "deepseek-v4-pro";
+  if (!key) throw new Error("OLLAMA_API_KEY not set");
+  return await ollamaPing(
+    host, key, model,
+    'Return JSON: {"outcome":"yes","probability":0.55,"confidence":0.6,"rationale":"test"}. Market: "Will the Fed cut rates in 2025?"'
+  );
+});
+
+// 8c. Ollama Cloud: reasoner model (deep edge gate)
+await check("LLM Ollama: reasoner model (deep gate)", async () => {
+  const key = process.env.OLLAMA_API_KEY;
+  const host = process.env.OLLAMA_HOST ?? "https://ollama.com";
+  const model = process.env.LLM_REASONER_MODEL ?? "glm-5";
+  if (!key) throw new Error("OLLAMA_API_KEY not set");
+  return await ollamaPing(
+    host, key, model,
+    'Return JSON: {"contrarianHypothesis":"test","steelmanCurrentPrice":"test","steelmanRebuttal":"test","identifiedBlindSpot":"test","fairPriceLow":0.4,"fairPriceHigh":0.6,"confidence":0.5,"expectedCorrectionPct":5,"catalyst":{"description":"test","expectedAt":"2025-12-31","expectedMovePct":3}}'
+  );
+});
+
+// 8d. Fallback: Grok reachable (used when Ollama is down)
+await check("LLM fallback: Grok reachable", async () => {
+  const key = process.env.GROK_API_KEY;
+  if (!key) throw new Error("GROK_API_KEY not set — Grok fallback disabled");
+  const model = process.env.GROK_MODEL ?? "grok-3";
+  const res = await fetch("https://api.x.ai/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+    body: JSON.stringify({ model, messages: [{ role: "user", content: "ping" }], max_tokens: 5 }),
+  });
+  if (!res.ok) {
+    const txt = (await res.text()).slice(0, 200);
+    throw new Error(`Grok ${res.status}: ${txt}`);
   }
   const body = (await res.json()) as { model?: string };
   return `model=${body.model ?? model} — OK`;

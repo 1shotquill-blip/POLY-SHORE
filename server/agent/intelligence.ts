@@ -1,4 +1,5 @@
 import { invokeLLM } from "../_core/llm";
+import { ENV } from "../_core/env";
 import {
   buildCategoryCalibrationContext,
   calibrateConfidence,
@@ -146,6 +147,8 @@ function formatSocialContext(socialSignals: SocialSignal[]): string {
 async function extractFactors(
   market: AgentMarket
 ): Promise<FactorExtractionResult> {
+  const model = ENV.llmExtractorModel;
+  const t0 = Date.now();
   const result = await invokeLLM({
     messages: [
       {
@@ -181,7 +184,7 @@ async function extractFactors(
       },
       strict: true,
     },
-  });
+  }, model);
 
   const text =
     typeof result.choices[0].message.content === "string"
@@ -191,7 +194,11 @@ async function extractFactors(
           .map(c => c.text)
           .join("");
 
-  return JSON.parse(text) as FactorExtractionResult;
+  const parsed = JSON.parse(text) as FactorExtractionResult;
+  console.log(
+    `[Intelligence] stage 1: ${model} → ${parsed.factors.length} factors (${Date.now() - t0}ms)`
+  );
+  return parsed;
 }
 
 async function estimateProbability(
@@ -201,6 +208,8 @@ async function estimateProbability(
   socialSignals: SocialSignal[],
   calibration?: CategoryCalibrationContext
 ): Promise<ProbabilityEstimationResult> {
+  const model = ENV.llmPrimaryModel;
+  const t0 = Date.now();
   const result = await invokeLLM({
     messages: [
       {
@@ -263,7 +272,7 @@ async function estimateProbability(
       },
       strict: true,
     },
-  });
+  }, model);
 
   const text =
     typeof result.choices[0].message.content === "string"
@@ -273,7 +282,11 @@ async function estimateProbability(
           .map(c => c.text)
           .join("");
 
-  return JSON.parse(text) as ProbabilityEstimationResult;
+  const parsed = JSON.parse(text) as ProbabilityEstimationResult;
+  console.log(
+    `[Intelligence] stage 2: ${model} → p=${parsed.probability.toFixed(3)}, c=${parsed.confidence.toFixed(3)} (${Date.now() - t0}ms)`
+  );
+  return parsed;
 }
 
 function clamp(v: number, min: number, max: number): number {

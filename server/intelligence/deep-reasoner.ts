@@ -1,4 +1,5 @@
 import { ENV } from "../_core/env";
+import { invokeLLM } from "../_core/llm";
 import { getClobReferencePrice } from "../agent/book-pricing";
 import type { AgentMarket, EnsembleDecision } from "../agent/types";
 import type { AnomalyScanResult } from "./anomaly-scanner";
@@ -113,39 +114,92 @@ function buildPrompt(input: DeepReasoningInput): string {
 export class OllamaDeepReasoningProvider implements DeepReasoningProvider {
   constructor(
     private readonly host = ENV.ollamaHost,
-    private readonly model = ENV.ollamaModel
+    private readonly model = ENV.llmReasonerModel
   ) {}
 
   async reason(input: DeepReasoningInput): Promise<DeepReasoningResult | null> {
     const now = input.now ?? new Date();
-    const response = await fetch(`${this.host.replace(/\/$/, "")}/api/chat`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model: this.model,
-        stream: false,
-        format: "json",
+    const t0 = Date.now();
+    const prompt = buildPrompt(input);
+
+    // Try Ollama Cloud first (authenticated), then fall back via invokeLLM chain
+    if (ENV.ollamaApiKey) {
+      try {
+        const response = await fetch(
+          `${this.host.replace(/\/$/, "")}/api/chat`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${ENV.ollamaApiKey}`,
+            },
+            body: JSON.stringify({
+              model: this.model,
+              stream: false,
+              format: "json",
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "Run a four-stage reflection chain: contrarian hypothesis, steelman opposing view, evidence-to-price gap quantification, and catalyst identification. Do not recommend a trade unless the anomaly is genuinely non-obvious and evidence-backed.",
+                },
+                { role: "user", content: prompt },
+              ],
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          const raw = await response.text().catch(() => "");
+          throw new Error(
+            `Ollama deep reasoning ${response.status}: ${raw.slice(0, 200)}`
+          );
+        }
+
+        const body = (await response.json()) as { message?: { content?: string } };
+        const content = body.message?.content;
+        if (!content) return null;
+        const result = parseReasoningPayload(JSON.parse(content), input, now);
+        console.log(
+          `[Intelligence] deep reasoner: ${this.model} → contrarian="${result?.contrarianHypothesis?.slice(0, 60) ?? "none"}" (${Date.now() - t0}ms)`
+        );
+        return result;
+      } catch (err) {
+        console.warn(
+          `[DeepReasoner] Ollama Cloud failed, falling back via invokeLLM chain: ${String(err).slice(0, 120)}`
+        );
+      }
+    }
+
+    // Fallback: use the standard invokeLLM fallback chain
+    const result = await invokeLLM(
+      {
         messages: [
           {
             role: "system",
             content:
               "Run a four-stage reflection chain: contrarian hypothesis, steelman opposing view, evidence-to-price gap quantification, and catalyst identification. Do not recommend a trade unless the anomaly is genuinely non-obvious and evidence-backed.",
           },
-          { role: "user", content: buildPrompt(input) },
+          { role: "user", content: prompt },
         ],
-      }),
-    });
+        responseFormat: { type: "json_object" },
+      },
+      this.model
+    );
 
-    if (!response.ok) {
-      throw new Error(
-        `Ollama deep reasoning failed (${response.status} ${response.statusText})`
-      );
-    }
+    const text =
+      typeof result.choices[0].message.content === "string"
+        ? result.choices[0].message.content
+        : (result.choices[0].message.content as Array<{ type: string; text?: string }>)
+            .filter(c => c.type === "text")
+            .map(c => c.text ?? "")
+            .join("");
 
-    const body = (await response.json()) as { message?: { content?: string } };
-    const content = body.message?.content;
-    if (!content) return null;
-    return parseReasoningPayload(JSON.parse(content), input, now);
+    const parsed = parseReasoningPayload(JSON.parse(text), input, now);
+    console.log(
+      `[Intelligence] deep reasoner: ${this.model} (fallback) → contrarian="${parsed?.contrarianHypothesis?.slice(0, 60) ?? "none"}" (${Date.now() - t0}ms)`
+    );
+    return parsed;
   }
 }
 

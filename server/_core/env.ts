@@ -10,6 +10,16 @@ export const ENV = {
   liveTradingEnabled: process.env.LIVE_TRADING_ENABLED === "true",
   ollamaHost: process.env.OLLAMA_HOST ?? "http://localhost:11434",
   ollamaModel: process.env.OLLAMA_MODEL ?? "llama3.1:8b",
+  ollamaApiKey: process.env.OLLAMA_API_KEY ?? "",
+  llmPrimaryModel:
+    process.env.LLM_PRIMARY_MODEL ?? "deepseek-v4-pro",
+  llmReasonerModel:
+    process.env.LLM_REASONER_MODEL ?? "glm-5",
+  llmExtractorModel:
+    process.env.LLM_EXTRACTOR_MODEL ?? "qwen3.5:27b",
+  llmFallbackProviders:
+    process.env.LLM_FALLBACK_PROVIDERS ?? "openrouter,grok",
+  openrouterApiKey: process.env.OPENROUTER_API_KEY ?? "",
   xBearerToken: process.env.X_BEARER_TOKEN ?? "",
   newsApiKey: process.env.NEWS_API_KEY ?? "",
   newsLookbackHours: Number(process.env.NEWS_LOOKBACK_HOURS ?? "24"),
