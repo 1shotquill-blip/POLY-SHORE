@@ -6,12 +6,18 @@ import {
   describeCalibrationContext,
   type CategoryCalibrationContext,
 } from "../intelligence/calibration";
+import {
+  ingestNewsForQueries,
+  type NewsSignal,
+} from "../intelligence/news-ingestion";
+import { searchTweets } from "../intelligence/x-ingestion";
 import { getClobReferencePrice } from "./book-pricing";
 import type {
   AgentMarket,
   EnsembleDecision,
   OutcomeSide,
   ProbabilityEstimate,
+  SocialSignal,
 } from "./types";
 
 export interface IntelligenceEngine {
@@ -103,6 +109,40 @@ function formatMarketContext(market: AgentMarket): string {
     .join("\n");
 }
 
+function formatNewsContext(news: NewsSignal[]): string {
+  if (news.length === 0) {
+    return "News context: unavailable or no high-signal results.";
+  }
+
+  return [
+    `News context (${news.length} items):`,
+    ...news.slice(0, 12).map(item => {
+      const sentiment = item.sentiment.toFixed(2);
+      return `- [${item.source}] ${item.timestamp.toISOString()} sentiment=${sentiment} ${item.content}`;
+    }),
+  ].join("\n");
+}
+
+function formatSocialContext(socialSignals: SocialSignal[]): string {
+  if (socialSignals.length === 0) {
+    return "Recent social signal: unavailable or no qualifying tweets.";
+  }
+
+  return [
+    `Recent social signal (${socialSignals.length} tweets):`,
+    ...socialSignals.slice(0, 20).map(tweet =>
+      [
+        `- @${tweet.author_username} ${tweet.created_at}`,
+        `likes=${tweet.metrics.likes} retweets=${tweet.metrics.retweets} replies=${tweet.metrics.replies}`,
+        typeof tweet.sentiment_score === "number"
+          ? `sentiment=${tweet.sentiment_score.toFixed(2)}`
+          : "sentiment=unavailable",
+        tweet.text,
+      ].join(" | ")
+    ),
+  ].join("\n");
+}
+
 async function extractFactors(
   market: AgentMarket
 ): Promise<FactorExtractionResult> {
@@ -110,8 +150,10 @@ async function extractFactors(
     messages: [
       {
         role: "system",
-        content:
+        content: [
           "You are a prediction-market research assistant. Given a market, identify the 5–8 most important factors that will determine the outcome and produce targeted search queries for each.",
+          "The searchQueries array should contain concise market-keyword queries suitable for X/Twitter and news search APIs.",
+        ].join("\n"),
       },
       {
         role: "user",
@@ -155,6 +197,8 @@ async function extractFactors(
 async function estimateProbability(
   market: AgentMarket,
   factors: string[],
+  news: NewsSignal[],
+  socialSignals: SocialSignal[],
   calibration?: CategoryCalibrationContext
 ): Promise<ProbabilityEstimationResult> {
   const result = await invokeLLM({
@@ -169,6 +213,8 @@ async function estimateProbability(
           "- Confidence is your certainty in the estimate: 0 = total uncertainty, 1 = near-certain.",
           "- Only set confidence ≥ 0.7 if evidence clearly supports a directional view.",
           "- Be calibrated: markets are often efficient; your edge must be well-supported.",
+          "- Weigh news context only when it is recent, specific, and market-relevant.",
+          "- Weigh social context only when tweets are recent, engaged, and directly relevant.",
           calibration
             ? `- Bayesian anchor: ${describeCalibrationContext(calibration)}`
             : "- Bayesian anchor: unavailable",
@@ -181,6 +227,10 @@ async function estimateProbability(
           "",
           "Key factors identified:",
           ...factors.map((f, i) => `${i + 1}. ${f}`),
+          "",
+          formatNewsContext(news),
+          "",
+          formatSocialContext(socialSignals),
         ].join("\n"),
       },
     ],
@@ -230,6 +280,29 @@ function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
+async function collectSocialSignals(
+  searchQueries: string[],
+  lookbackHours = 6
+): Promise<SocialSignal[]> {
+  const uniqueQueries = Array.from(
+    new Set(searchQueries.map(query => query.trim()).filter(Boolean))
+  ).slice(0, 8);
+  const batches = await Promise.all(
+    uniqueQueries.map(query => searchTweets(query, lookbackHours))
+  );
+  const byId = new Map<string, SocialSignal>();
+  for (const tweet of batches.flat()) byId.set(tweet.id, tweet);
+  return Array.from(byId.values())
+    .sort((a, b) => {
+      const engagementA =
+        a.metrics.likes + a.metrics.retweets * 2 + a.metrics.replies;
+      const engagementB =
+        b.metrics.likes + b.metrics.retweets * 2 + b.metrics.replies;
+      return engagementB - engagementA;
+    })
+    .slice(0, 20);
+}
+
 export class LLMIntelligenceEngine implements IntelligenceEngine {
   async evaluate(
     market: AgentMarket,
@@ -243,6 +316,28 @@ export class LLMIntelligenceEngine implements IntelligenceEngine {
       return null;
     }
 
+    let news: NewsSignal[] = [];
+    try {
+      news = await ingestNewsForQueries(factors.searchQueries, {
+        now,
+      });
+    } catch {
+      console.warn(
+        `[News] News ingestion failed for market ${market.marketId}; continuing with LLM-only reasoning`
+      );
+      news = [];
+    }
+
+    let socialSignals: SocialSignal[] = [];
+    try {
+      socialSignals = await collectSocialSignals(factors.searchQueries);
+    } catch {
+      console.warn(
+        `[XIngestion] Social ingestion failed for market ${market.marketId}; continuing with LLM/news reasoning`
+      );
+      socialSignals = [];
+    }
+
     let calibration: CategoryCalibrationContext | undefined;
     try {
       calibration = await buildCategoryCalibrationContext(market.category);
@@ -252,7 +347,13 @@ export class LLMIntelligenceEngine implements IntelligenceEngine {
 
     let est: ProbabilityEstimationResult;
     try {
-      est = await estimateProbability(market, factors.factors, calibration);
+      est = await estimateProbability(
+        market,
+        factors.factors,
+        news,
+        socialSignals,
+        calibration
+      );
     } catch {
       return null;
     }
@@ -273,8 +374,17 @@ export class LLMIntelligenceEngine implements IntelligenceEngine {
       source: "llm",
       probability: estimatedProbability,
       confidence,
-      evidence: [est.rationale, ...factors.factors],
+      evidence: [
+        est.rationale,
+        ...factors.factors,
+        ...news.map(item => item.content),
+        ...socialSignals.map(
+          tweet =>
+            `Recent social signal @${tweet.author_username}: ${tweet.text}`
+        ),
+      ],
       freshnessSeconds,
+      socialSignals,
     };
 
     return {
@@ -284,7 +394,12 @@ export class LLMIntelligenceEngine implements IntelligenceEngine {
       confidence,
       estimates: [estimate],
       modelDisagreement: 0,
-      evidenceSummary: [est.rationale],
+      evidenceSummary: [
+        est.rationale,
+        socialSignals.length > 0
+          ? `Recent social signal: ${socialSignals.length} tweets factored into forecast`
+          : "Recent social signal unavailable or empty",
+      ],
       generatedAt: now,
     };
   }

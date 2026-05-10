@@ -1,6 +1,7 @@
 export type OutcomeSide = "yes" | "no";
 export type TradeSide = "buy" | "sell";
 export type ExecutionMode = "paper" | "live";
+export type ExchangeId = "polymarket" | "kalshi";
 
 export type MarketDataStatus =
   | "fresh"
@@ -10,6 +11,7 @@ export type MarketDataStatus =
   | "invalid";
 
 export interface AgentMarket {
+  exchange?: ExchangeId;
   marketId: string;
   conditionId?: string;
   question: string;
@@ -39,6 +41,21 @@ export interface ProbabilityEstimate {
   evidence: string[];
   freshnessSeconds: number;
   failureReason?: string;
+  socialSignals?: SocialSignal[];
+}
+
+export interface SocialSignal {
+  id: string;
+  text: string;
+  author_id: string;
+  author_username: string;
+  created_at: string;
+  metrics: {
+    likes: number;
+    retweets: number;
+    replies: number;
+  };
+  sentiment_score?: number;
 }
 
 export interface EnsembleDecision {
@@ -81,6 +98,7 @@ export interface RiskLimits {
 }
 
 export interface TradeIntent {
+  exchange?: ExchangeId;
   marketId: string;
   tokenId: string;
   outcome: OutcomeSide;

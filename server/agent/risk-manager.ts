@@ -155,10 +155,21 @@ export function evaluateRisk(
   const executionAdjustedKellyUsd =
     timeWeightedKellyUsd * executionProfile.sizeMultiplier;
 
+  const marketExposureKey = market.exchange
+    ? `${market.exchange}:${market.marketId}`
+    : market.marketId;
+  const categoryExposureKey =
+    market.exchange && market.category
+      ? `${market.exchange}:${market.category}`
+      : market.category;
   const currentMarketExposure =
-    portfolio.marketExposureUsd[market.marketId] ?? 0;
+    portfolio.marketExposureUsd[marketExposureKey] ??
+    portfolio.marketExposureUsd[market.marketId] ??
+    0;
   const currentCategoryExposure = market.category
-    ? (portfolio.categoryExposureUsd[market.category] ?? 0)
+    ? (portfolio.categoryExposureUsd[categoryExposureKey ?? market.category] ??
+      portfolio.categoryExposureUsd[market.category] ??
+      0)
     : 0;
   const remainingSingleMarketUsd = Math.max(
     0,
@@ -187,7 +198,8 @@ export function evaluateRisk(
   const intent: TradeIntent | undefined =
     reasons.length === 0
       ? {
-          marketId: market.marketId,
+      marketId: market.marketId,
+      exchange: market.exchange,
           tokenId,
           outcome: ensemble.outcome,
           side: shouldBuy ? "buy" : "sell",

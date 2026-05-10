@@ -301,6 +301,7 @@ export function normalizeAgentMarket(
     : 0;
 
   return {
+    exchange: "polymarket",
     marketId: String(normalized.id ?? yesBook.market ?? ""),
     conditionId: normalized.conditionId,
     question: normalized.question ?? "",

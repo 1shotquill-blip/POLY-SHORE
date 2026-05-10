@@ -235,7 +235,7 @@ export class PolymarketAdapter implements ExecutionAdapter {
   }
 }
 
-export { ensureTradingAllowances } from "./allowances";
+export { checkAndApproveAllowance, ensureTradingAllowances } from "./allowances";
 export { getPolymarketClient } from "./client";
 export {
   getOrDeriveL2Credentials,

@@ -219,6 +219,25 @@ export async function getOpenOrders() {
     );
 }
 
+export async function getRecentOrders(limit: number = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(orders).orderBy(desc(orders.placedAt)).limit(limit);
+}
+
+export async function getClosedOrders(limit: number = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(orders)
+    .where(
+      inArray(orders.status, ["filled", "cancelled", "expired", "rejected"])
+    )
+    .orderBy(desc(orders.placedAt))
+    .limit(limit);
+}
+
 export async function getReconcilableOrders() {
   const db = await getDb();
   if (!db) return [];

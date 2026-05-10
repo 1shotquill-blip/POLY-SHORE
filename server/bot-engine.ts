@@ -13,7 +13,7 @@ import { AgentOrchestrator } from "./agent/orchestrator";
 import { LLMIntelligenceEngine } from "./agent/intelligence";
 import { ProductionDeepEdgeGate } from "./agent/deep-edge-gate";
 import { ClobPortfolioProvider } from "./agent/portfolio-provider";
-import { scanTradableMarkets } from "./agent/market-scanner";
+import { MultiExchangeMarketProvider } from "./agent/multi-exchange-market-provider";
 import { recoverOpenOrders } from "./agent/startup-recovery";
 import {
   buildVelocityExitCandidate,
@@ -82,20 +82,11 @@ export class BotEngine {
     const deepEdgeGate = new ProductionDeepEdgeGate();
 
     this.orchestrator = new AgentOrchestrator({
-      marketProvider: {
-        scan: async now =>
-          (
-            await scanTradableMarkets(
-              {
-                limit: this.config.maxMarketsPerTick * 3,
-                minVolume24h: this.config.minVolume24h,
-                minLiquidity: this.config.minLiquidity,
-              },
-              { ...DEFAULT_RISK_LIMITS, maxSpread: this.config.maxSpread },
-              now
-            )
-          ).tradable.slice(0, this.config.maxMarketsPerTick),
-      },
+      marketProvider: new MultiExchangeMarketProvider({
+        limit: this.config.maxMarketsPerTick * 3,
+        minVolume24h: this.config.minVolume24h,
+        minLiquidity: this.config.minLiquidity,
+      }),
       portfolioProvider,
       intelligence,
       execution: this.executionAdapter,
@@ -114,7 +105,6 @@ export class BotEngine {
     this.emergencyBrakeTriggered = false;
 
     console.log(`[Bot] Starting in ${mode} mode`);
-    await this.logStartupStatus(mode);
     await updateBotConfig({
       isRunning: 1,
       isPaused: 0,
@@ -271,23 +261,6 @@ export class BotEngine {
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────
-
-  private async logStartupStatus(mode: string): Promise<void> {
-    try {
-      const portfolio = await getExchangePortfolioState(new Date());
-      console.log(
-        `[Bot] Startup status mode=${mode} bankrollUsd=${portfolio.snapshot.bankrollUsd.toFixed(
-          2
-        )} maxPositionUsd=${ENV.maxPositionUsd.toFixed(2)}`
-      );
-    } catch (error) {
-      console.warn(
-        `[Bot] Startup status mode=${mode} bankrollUsd=unavailable maxPositionUsd=${ENV.maxPositionUsd.toFixed(
-          2
-        )} reason=${String(error)}`
-      );
-    }
-  }
 
   private async evaluateVelocityExitOpportunities(
     now = new Date()
