@@ -48,6 +48,7 @@ import {
 } from "./agent/market-selection";
 import { PaperExecutionAdapter } from "./agent/paper-execution";
 import { scanPolymarketCandidates } from "./agent/polymarket-client";
+import { activeProvider, activeProviderLatencyMs } from "./_core/llm";
 import type {
   AgentMarket,
   EnsembleDecision,
@@ -461,6 +462,14 @@ export const operatorRouter = router({
         equity: equityAll,
         trades,
         audits,
+      },
+      llm: {
+        provider: activeProvider,
+        latencyMs: activeProviderLatencyMs,
+        primaryModel: ENV.llmPrimaryModel,
+        reasonerModel: ENV.llmReasonerModel,
+        extractorModel: ENV.llmExtractorModel,
+        isFallback: activeProvider !== "unconfigured" && !activeProvider.startsWith("ollama"),
       },
     };
   }),

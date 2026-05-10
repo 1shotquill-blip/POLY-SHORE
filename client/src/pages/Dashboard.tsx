@@ -40,6 +40,7 @@ import {
 import {
   AlertTriangle,
   Ban,
+  BrainCircuit,
   Copy,
   Gauge,
   RadioTower,
@@ -293,6 +294,29 @@ export default function Dashboard() {
             <Badge className={data?.status.killswitchArmed ? "bg-emerald-500/20 text-emerald-300" : "bg-red-500/20 text-red-300"}>
               {data?.status.killswitchArmed ? "ARMED" : "DISARMED"}
             </Badge>
+            {data?.llm && (
+              <div className="flex items-center gap-1.5">
+                {data.llm.isFallback ? (
+                  <Badge className="border-amber-500/40 bg-amber-500/20 font-mono text-[11px] text-amber-300">
+                    <BrainCircuit className="mr-1 size-3" />
+                    FALLBACK: {data.llm.provider}
+                  </Badge>
+                ) : (
+                  <Badge className="border-sky-500/30 bg-sky-500/15 font-mono text-[11px] text-sky-300">
+                    <BrainCircuit className="mr-1 size-3" />
+                    LLM: {data.llm.provider}
+                  </Badge>
+                )}
+                {data.llm.latencyMs > 0 && (
+                  <Badge className="bg-white/5 font-mono text-[10px] text-zinc-400">
+                    {data.llm.latencyMs}ms
+                  </Badge>
+                )}
+                <Badge className="bg-white/5 font-mono text-[10px] text-zinc-500" title="Deep Reasoner">
+                  R: {data.llm.reasonerModel}
+                </Badge>
+              </div>
+            )}
             <Button
               className="bg-red-600 text-white hover:bg-red-500"
               onClick={() => emergencyStop.mutate()}
