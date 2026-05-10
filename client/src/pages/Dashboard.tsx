@@ -93,14 +93,51 @@ function GlassCard({
   );
 }
 
+type HybridBreakdown = {
+  llmProbabilityConfidence: number;
+  deepEdgeAnomaly: number;
+  marketSelection: number;
+  liquidity: number;
+  volumeVelocity: number;
+  consensusDivergence: number;
+  recencyPenalty: number;
+  socialSignal: number;
+  socialTweetCount: number;
+  socialTopTweets: Array<{ snippet: string; engagement: number }>;
+};
+
+const HYBRID_WEIGHTS: Record<string, number> = {
+  llmProbabilityConfidence: 0.20,
+  deepEdgeAnomaly: 0.18,
+  marketSelection: 0.18,
+  liquidity: 0.10,
+  volumeVelocity: 0.10,
+  consensusDivergence: 0.10,
+  socialSignal: 0.10,
+  recencyPenalty: 0.04,
+};
+
+const SIGNAL_LABELS: Record<string, string> = {
+  llmProbabilityConfidence: "LLM confidence",
+  deepEdgeAnomaly: "Deep edge anomaly",
+  marketSelection: "Market selection",
+  liquidity: "Liquidity",
+  volumeVelocity: "Volume velocity",
+  consensusDivergence: "Consensus divergence",
+  recencyPenalty: "Recency",
+  socialSignal: "Social signal",
+};
+
 function ConfidenceMeter({
   score,
   breakdown,
 }: {
   score: number;
-  breakdown: Record<string, number>;
+  breakdown: HybridBreakdown;
 }) {
   const clamped = Math.max(0, Math.min(100, score || 0));
+  const scoreSignals = Object.keys(HYBRID_WEIGHTS) as Array<keyof typeof HYBRID_WEIGHTS>;
+
   return (
     <div className="group relative h-5 min-w-36 overflow-visible rounded border border-white/10 bg-black/40">
       <div
@@ -114,15 +151,36 @@ function ConfidenceMeter({
       <div className="absolute inset-0 flex items-center justify-center font-mono text-[11px] font-bold text-white drop-shadow">
         {clamped.toFixed(2)}
       </div>
-      <div className="pointer-events-none absolute right-0 top-7 z-30 hidden w-72 rounded border border-white/10 bg-[#111118] p-3 text-xs text-zinc-200 shadow-2xl group-hover:block">
-        {Object.entries(breakdown).map(([key, value]) => (
-          <div key={key} className="mb-1 flex justify-between gap-4">
-            <span className="capitalize text-zinc-400">
-              {key.replace(/[A-Z]/g, match => ` ${match}`)}
-            </span>
-            <span className="font-mono">{(Number(value) * 100).toFixed(2)}</span>
+      <div className="pointer-events-none absolute right-0 top-7 z-30 hidden w-80 rounded border border-white/10 bg-[#111118] p-3 text-xs text-zinc-200 shadow-2xl group-hover:block">
+        {scoreSignals.map(key => {
+          const raw = Number((breakdown as Record<string, unknown>)[key] ?? 0);
+          const weight = HYBRID_WEIGHTS[key] ?? 0;
+          const contrib = raw * weight * 100;
+          return (
+            <div key={key} className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-zinc-400">{SIGNAL_LABELS[key] ?? key}</span>
+              <span className="flex gap-2 font-mono">
+                <span className="w-10 text-right text-zinc-300">{(raw * 100).toFixed(1)}</span>
+                <span className="w-6 text-right text-zinc-600">×{(weight * 100).toFixed(0)}%</span>
+                <span className="w-8 text-right text-[#FF6B35]">{contrib.toFixed(1)}</span>
+              </span>
+            </div>
+          );
+        })}
+        {breakdown.socialTweetCount > 0 && (
+          <div className="mt-2 border-t border-white/10 pt-2">
+            <div className="mb-1 text-zinc-500">
+              Social: {breakdown.socialTweetCount} tweet{breakdown.socialTweetCount !== 1 ? "s" : ""} · score {(breakdown.socialSignal * 100).toFixed(1)}
+            </div>
+            {breakdown.socialTopTweets.map((t, i) => (
+              <div key={i} className="mb-0.5 truncate text-zinc-400">
+                <span className="mr-1 text-zinc-600">#{i + 1}</span>
+                <span className="text-amber-400/80">eng={t.engagement.toFixed(0)}</span>
+                {" "}{t.snippet}
+              </div>
+            ))}
           </div>
-        ))}
+        )}
       </div>
     </div>
   );

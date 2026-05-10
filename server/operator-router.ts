@@ -89,6 +89,8 @@ type HybridBreakdown = {
   consensusDivergence: number;
   recencyPenalty: number;
   socialSignal: number;
+  socialTweetCount: number;
+  socialTopTweets: Array<{ snippet: string; engagement: number }>;
 };
 
 function numberFrom(value: unknown): number {
@@ -198,7 +200,7 @@ function buildRiskLimitsFromConfig(config: Awaited<ReturnType<typeof getBotConfi
   };
 }
 
-function hybridScore(input: {
+export function hybridScore(input: {
   ensemble?: EnsembleDecision | null;
   deepEdge?: DeepEdgeDecision | null;
   selection?: MarketSelectionScore | null;
@@ -224,21 +226,38 @@ function hybridScore(input: {
         input.market.orderbookUpdatedAt
       )
     : 0;
-  const socialSignals =
-    input.ensemble?.estimates.reduce(
-      (count, estimate) => count + (estimate.socialSignals?.length ?? 0),
-      0
-    ) ?? 0;
-  const socialSignal = Math.min(1, socialSignals / 20);
+  // Collect all tweets across all probability estimates
+  const allTweets = (input.ensemble?.estimates ?? []).flatMap(
+    e => e.socialSignals ?? []
+  );
+
+  // Engagement-weighted social signal: 1 viral tweet > 20 dead ones
+  const totalEngagement = allTweets.reduce(
+    (sum, t) =>
+      sum + t.metrics.likes + t.metrics.retweets * 2 + t.metrics.replies * 1.5,
+    0
+  );
+  const socialSignal = Math.min(1, totalEngagement / 1000);
+
+  // Top-3 tweets by engagement for tooltip
+  const socialTopTweets = allTweets
+    .map(t => ({
+      snippet: t.text.slice(0, 80),
+      engagement:
+        t.metrics.likes + t.metrics.retweets * 2 + t.metrics.replies * 1.5,
+    }))
+    .sort((a, b) => b.engagement - a.engagement)
+    .slice(0, 3);
 
   const score =
-    (llmProbabilityConfidence * 0.25 +
-      deepEdgeAnomaly * 0.2 +
-      marketSelection * 0.2 +
+    (llmProbabilityConfidence * 0.2 +
+      deepEdgeAnomaly * 0.18 +
+      marketSelection * 0.18 +
       liquidity * 0.1 +
       volumeVelocity * 0.1 +
       consensusDivergence * 0.1 +
-      recencyPenalty * 0.05) *
+      socialSignal * 0.1 +
+      recencyPenalty * 0.04) *
     100;
 
   return {
@@ -252,6 +271,8 @@ function hybridScore(input: {
       consensusDivergence,
       recencyPenalty,
       socialSignal,
+      socialTweetCount: allTweets.length,
+      socialTopTweets,
     },
   };
 }
