@@ -71,8 +71,8 @@ export class OrderbookWebSocketManager {
           ? (event.data as WsBookMessage[])
           : [JSON.parse(String(event.data)) as WsBookMessage];
         for (const msg of messages) this.handleMessage(msg);
-      } catch {
-        // ignore malformed frames
+      } catch (err) {
+        console.warn("[OrderbookWS] Malformed frame dropped:", String(err).slice(0, 200));
       }
     };
 

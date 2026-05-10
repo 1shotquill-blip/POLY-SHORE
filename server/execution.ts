@@ -78,6 +78,10 @@ function orderToTradeIntent(
   if (!order) return null;
   const price = Number(order.price);
   const tokenSize = Number(order.size);
+  if (!Number.isFinite(price) || !Number.isFinite(tokenSize)) {
+    console.error(`[Execution] Corrupted order data for nonce ${order.nonce}: price=${order.price} size=${order.size}`);
+    return null;
+  }
   return {
     marketId: order.marketId,
     tokenId: order.tokenId,

@@ -279,6 +279,12 @@ async function fetchQueryNews(
     pending,
   });
 
+  // Evict the poisoned pending entry on rejection so the next caller retries
+  pending.catch(() => {
+    const current = cache.get(key);
+    if (current?.pending === pending) cache.delete(key);
+  });
+
   return pending;
 }
 

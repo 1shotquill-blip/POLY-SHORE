@@ -74,3 +74,27 @@ export const ENV = {
   maxPositionUsd: Number(process.env.MAX_POSITION_USD ?? "100"),
   maxDrawdownPct: Number(process.env.MAX_DRAWDOWN_PCT ?? "0.15") * 100,
 };
+
+/**
+ * Fail fast if required credentials are absent when live trading is enabled.
+ * Call this at bot startup before any orders can be placed.
+ */
+export function validateProductionEnv(): void {
+  if (!ENV.liveTradingEnabled) return;
+
+  const missing: string[] = [];
+
+  if (!ENV.polymarketPrivateKey) missing.push("POLYMARKET_PRIVATE_KEY");
+  if (!ENV.polymarketFunderAddress) missing.push("POLYMARKET_FUNDER_ADDRESS");
+  if (!ENV.polymarketApiKey) missing.push("POLYMARKET_API_KEY");
+  if (!ENV.polymarketApiSecret) missing.push("POLYMARKET_API_SECRET");
+  if (!ENV.polymarketApiPassphrase) missing.push("POLYMARKET_API_PASSPHRASE");
+  if (!ENV.databaseUrl) missing.push("DATABASE_URL");
+  if (!ENV.cookieSecret) missing.push("JWT_SECRET");
+
+  if (missing.length > 0) {
+    throw new Error(
+      `[ENV] Missing required production environment variables: ${missing.join(", ")}`
+    );
+  }
+}

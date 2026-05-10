@@ -8,7 +8,7 @@ import {
 } from "./db";
 import { updateOrderSyncState } from "./db";
 import { notifyOwner } from "./_core/notification";
-import { ENV } from "./_core/env";
+import { ENV, validateProductionEnv } from "./_core/env";
 import { AgentOrchestrator } from "./agent/orchestrator";
 import { LLMIntelligenceEngine } from "./agent/intelligence";
 import { ProductionDeepEdgeGate } from "./agent/deep-edge-gate";
@@ -53,6 +53,7 @@ export class BotEngine {
   private emergencyBrakeTriggered = false;
   private tickInterval: NodeJS.Timeout | null = null;
   private lifecycleInterval: NodeJS.Timeout | null = null;
+  private lifecycleLock = false;
   private readonly config: BotEngineConfig;
   private orchestrator: AgentOrchestrator | null = null;
   private executionAdapter: ExecutionAdapter | null = null;
@@ -73,6 +74,9 @@ export class BotEngine {
       await this.runBacktestMode();
       return;
     }
+
+    // Fail fast if live-trading credentials are absent
+    validateProductionEnv();
 
     this.executionAdapter = await createExecutionAdapter();
     await this.recoverExecutionState();
@@ -104,13 +108,16 @@ export class BotEngine {
     this.isPaused = false;
     this.emergencyBrakeTriggered = false;
 
-    console.log(`[Bot] Starting in ${mode} mode`);
     await updateBotConfig({
       isRunning: 1,
       isPaused: 0,
       emergencyBrakeTriggered: 0,
     });
 
+    // Print startup confidence banner
+    await this.printStartupBanner(mode, portfolioProvider);
+
+    // Start intervals only after all setup succeeds so we don't leak timers
     this.tickInterval = setInterval(() => {
       this.tick().catch(err => console.error("[Bot] Tick error:", err));
     }, this.config.pollingIntervalSeconds * 1_000);
@@ -187,6 +194,21 @@ export class BotEngine {
 
   private async pollOrderLifecycle(): Promise<void> {
     if (!this.executionAdapter) return;
+    // Guard against concurrent lifecycle polls (e.g. slow exchange round-trips)
+    if (this.lifecycleLock) {
+      console.warn("[Bot] Lifecycle poll skipped — previous poll still running");
+      return;
+    }
+    this.lifecycleLock = true;
+    try {
+      await this._pollOrderLifecycleInner();
+    } finally {
+      this.lifecycleLock = false;
+    }
+  }
+
+  private async _pollOrderLifecycleInner(): Promise<void> {
+    if (!this.executionAdapter) return;
 
     const openOrders = await getOpenOrders();
     const now = new Date();
@@ -258,6 +280,57 @@ export class BotEngine {
     }
 
     await this.evaluateVelocityExitOpportunities(now);
+  }
+
+  // ─── Startup confidence banner ────────────────────────────────────────────
+
+  private async printStartupBanner(
+    mode: string,
+    portfolioProvider: ClobPortfolioProvider
+  ): Promise<void> {
+    const { getKalshiCashBalance } = await import("./exchange/kalshi");
+
+    let pmBankroll = 0;
+    let kalshiBankroll: number | null = null;
+
+    try {
+      const snapshot = await portfolioProvider.snapshot();
+      pmBankroll = snapshot.bankrollUsd;
+    } catch {
+      // balance unavailable at startup — will populate after first tick
+    }
+
+    try {
+      kalshiBankroll = await getKalshiCashBalance();
+    } catch {
+      // Kalshi balance unavailable
+    }
+
+    const pmKs = ENV.polymarketKillswitchArmed ? "ARMED  " : "DISARMED";
+    const kalshiKs = ENV.kalshiKillswitchArmed ? "ARMED  " : "DISARMED";
+    const modeLabel = mode.toUpperCase().padEnd(5);
+    const maxPos = `$${ENV.maxPositionUsd.toFixed(2)}`;
+    const maxDD = `${ENV.maxDrawdownPct.toFixed(1)}%`;
+    const pmBal = `$${pmBankroll.toFixed(2)} USDC`;
+    const kalshiBal =
+      kalshiBankroll !== null
+        ? `$${kalshiBankroll.toFixed(2)} USD`
+        : "unavailable";
+
+    const line = (label: string, value: string) =>
+      `║ ${(label + ":").padEnd(30)} ${value.padEnd(25)} ║`;
+
+    console.log(`
+╔══════════════════════════════════════════════════════════════╗
+║ POLY-SHORE LIVE                                              ║
+${line("Mode", modeLabel)}
+${line("Killswitch (Polymarket)", pmKs)}
+${line("Killswitch (Kalshi)", kalshiKs)}
+${line("Polymarket bankroll", pmBal)}
+${line("Kalshi bankroll", kalshiBal)}
+${line("Max position", maxPos)}
+${line("Max drawdown", maxDD)}
+╚══════════════════════════════════════════════════════════════╝`);
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────

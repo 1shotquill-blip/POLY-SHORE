@@ -337,7 +337,9 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
+    const raw = await response.text().catch(() => "");
+    // Truncate to avoid logging large bodies that may contain key material
+    const errorText = raw.slice(0, 500);
     throw new Error(
       `LLM invoke failed: ${response.status} ${response.statusText} – ${errorText}`
     );
