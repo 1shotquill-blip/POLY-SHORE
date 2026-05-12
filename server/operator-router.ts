@@ -21,9 +21,11 @@ import {
   checkAndApproveAllowance,
   getPolymarketClient,
   getPolymarketLiveReadiness,
+  PolymarketAdapter,
   PolymarketKillswitch,
 } from "./exchange/polymarket";
 import {
+  createKalshiExecutionAdapter,
   getKalshiCashBalance,
   getKalshiMarket,
   listKalshiMarkets,
@@ -52,6 +54,7 @@ import { activeProvider, activeProviderLatencyMs } from "./_core/llm";
 import type {
   AgentMarket,
   EnsembleDecision,
+  ExecutionReceipt,
   RiskDecision,
   RiskLimits,
   TradeIntent,
@@ -639,16 +642,17 @@ export const operatorRouter = router({
       z.object({
         polymarketId: z.string().min(1),
         kalshiId: z.string().min(1),
+        sizeUsd: z.number().min(1).max(10_000).default(10),
       })
     )
     .mutation(async ({ input }) => {
-      const [polymarket, kalshi] = await Promise.all([
+      const [polyMarket, kalshiMarket] = await Promise.all([
         findMarket(input.polymarketId, "polymarket"),
         findMarket(input.kalshiId, "kalshi"),
       ]);
       const opportunities = await scanCrossExchangeArbitrage([
-        polymarket,
-        kalshi,
+        polyMarket,
+        kalshiMarket,
       ]);
       const opportunity = opportunities[0];
       if (!opportunity) {
@@ -657,15 +661,109 @@ export const operatorRouter = router({
           reason: "No current cross-exchange arbitrage remains for this pair",
         };
       }
-      const paper = new PaperExecutionAdapter({
-        orderTtlMs: ENV.orderTtlMs,
-        partialFillRatio: 0.5,
-      });
-      const receipts = await Promise.all([
-        paper.place(opportunity.intents[0], opportunity.polymarket),
-        paper.place(opportunity.intents[1], opportunity.kalshi),
+
+      const liveMode =
+        process.env.EXECUTION_MODE === "live" || ENV.liveTradingEnabled;
+
+      const polyIntent = { ...opportunity.intents[0], sizeUsd: input.sizeUsd };
+      const kalshiIntent = { ...opportunity.intents[1], sizeUsd: input.sizeUsd };
+
+      let polyReceipt: ExecutionReceipt | null = null;
+      let kalshiReceipt: ExecutionReceipt | null = null;
+      let partialFailure: string | null = null;
+
+      if (liveMode) {
+        const [polyAdapter, kalshiAdapter] = await Promise.all([
+          PolymarketAdapter.create(),
+          createKalshiExecutionAdapter(),
+        ]);
+
+        // Execute both legs simultaneously
+        const [polyResult, kalshiResult] = await Promise.allSettled([
+          polyAdapter.place(polyIntent, opportunity.polymarket),
+          kalshiAdapter.place(kalshiIntent, opportunity.kalshi),
+        ]);
+
+        if (polyResult.status === "fulfilled") {
+          polyReceipt = polyResult.value;
+        } else {
+          partialFailure = `Polymarket leg failed: ${String(polyResult.reason)}`;
+          console.error("[ArbitrageExec] Polymarket leg failed", polyResult.reason);
+        }
+
+        if (kalshiResult.status === "fulfilled") {
+          kalshiReceipt = kalshiResult.value;
+        } else {
+          const msg = `Kalshi leg failed: ${String(kalshiResult.reason)}`;
+          partialFailure = partialFailure ? `${partialFailure}; ${msg}` : msg;
+          console.error("[ArbitrageExec] Kalshi leg failed", kalshiResult.reason);
+        }
+
+        // If only one leg filled, warn loudly — position is no longer hedged
+        if ((polyReceipt && !kalshiReceipt) || (!polyReceipt && kalshiReceipt)) {
+          console.error(
+            "[ArbitrageExec] PARTIAL FILL — one leg executed, the other did not. Manual intervention may be required.",
+            { polyReceipt, kalshiReceipt }
+          );
+        }
+      } else {
+        const paper = new PaperExecutionAdapter({
+          orderTtlMs: ENV.orderTtlMs,
+          partialFillRatio: 0.5,
+        });
+        [polyReceipt, kalshiReceipt] = await Promise.all([
+          paper.place(polyIntent, opportunity.polymarket),
+          paper.place(kalshiIntent, opportunity.kalshi),
+        ]);
+      }
+
+      const now = new Date();
+      await Promise.all([
+        polyReceipt && polyReceipt.status !== "rejected"
+          ? insertOrder({
+              nonce: polyReceipt.localOrderId,
+              exchangeOrderId: polyReceipt.exchangeOrderId,
+              marketId: polyIntent.marketId,
+              tokenId: polyIntent.tokenId,
+              side: polyIntent.side,
+              price: String(polyIntent.limitPrice),
+              size: String(polyIntent.sizeUsd),
+              status: "pending",
+              lifecycleState: "ACCEPTED_BY_CLOB",
+              edgeAtPlacement: String(opportunity.gap),
+              confidenceAtPlacement: String(opportunity.semanticMatchConfidence),
+              placedAt: polyReceipt.submittedAt,
+              acceptedAt: polyReceipt.submittedAt,
+              expiresAt: new Date(polyReceipt.submittedAt.getTime() + ENV.orderTtlMs),
+            })
+          : null,
+        kalshiReceipt && kalshiReceipt.status !== "rejected"
+          ? insertOrder({
+              nonce: kalshiReceipt.localOrderId,
+              exchangeOrderId: kalshiReceipt.exchangeOrderId,
+              marketId: kalshiIntent.marketId,
+              tokenId: kalshiIntent.tokenId ?? "",
+              side: kalshiIntent.side,
+              price: String(kalshiIntent.limitPrice),
+              size: String(kalshiIntent.sizeUsd),
+              status: "pending",
+              lifecycleState: "ACCEPTED_BY_CLOB",
+              edgeAtPlacement: String(opportunity.gap),
+              confidenceAtPlacement: String(opportunity.semanticMatchConfidence),
+              placedAt: kalshiReceipt.submittedAt,
+              acceptedAt: kalshiReceipt.submittedAt,
+              expiresAt: new Date(kalshiReceipt.submittedAt.getTime() + ENV.orderTtlMs),
+            })
+          : null,
       ]);
-      return { submitted: true, receipts, opportunity };
+
+      return {
+        submitted: Boolean(polyReceipt || kalshiReceipt),
+        partialFailure,
+        liveMode,
+        receipts: { polymarket: polyReceipt, kalshi: kalshiReceipt },
+        opportunity,
+      };
     }),
 
   cancelOrder: adminProcedure

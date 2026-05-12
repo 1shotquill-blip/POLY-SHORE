@@ -1,6 +1,17 @@
 import { invokeLLM } from "../_core/llm";
 import type { AgentMarket, TradeIntent } from "../agent/types";
 
+export interface ArbitrageScanOptions {
+  /** Maximum total cost (yes + no) to qualify as an opportunity. Default 0.98 */
+  maxTotalCost?: number;
+  /** Minimum liquidity (USD) for each leg. Default 0 */
+  minLiquidityUsd?: number;
+  /** Minimum 24h volume (USD) for each leg. Default 0 */
+  minVolume24hUsd?: number;
+  /** Maximum hours until market expiry. 0 = no limit */
+  maxHoursToExpiry?: number;
+}
+
 export interface CrossExchangeArbitrageOpportunity {
   anomalyType: "cross_exchange_arbitrage";
   polymarket: AgentMarket;
@@ -119,10 +130,34 @@ function buildIntent(
 }
 
 export async function scanCrossExchangeArbitrage(
-  markets: AgentMarket[]
+  markets: AgentMarket[],
+  options: ArbitrageScanOptions = {}
 ): Promise<CrossExchangeArbitrageOpportunity[]> {
-  const polymarket = markets.filter(market => market.exchange === "polymarket");
-  const kalshi = markets.filter(market => market.exchange === "kalshi");
+  const {
+    maxTotalCost = 0.98,
+    minLiquidityUsd = 0,
+    minVolume24hUsd = 0,
+    maxHoursToExpiry = 0,
+  } = options;
+
+  const now = Date.now();
+  const expiryDeadline = maxHoursToExpiry > 0
+    ? now + maxHoursToExpiry * 3_600_000
+    : Infinity;
+
+  function meetsFilters(market: AgentMarket): boolean {
+    if (market.liquidity < minLiquidityUsd) return false;
+    if (market.volume24h < minVolume24hUsd) return false;
+    if (expiryDeadline !== Infinity && market.expiresAt.getTime() > expiryDeadline) return false;
+    return true;
+  }
+
+  const polymarket = markets.filter(
+    market => market.exchange === "polymarket" && meetsFilters(market)
+  );
+  const kalshi = markets.filter(
+    market => market.exchange === "kalshi" && meetsFilters(market)
+  );
   const matches = await matchMarketsSemantically(polymarket, kalshi);
   const byPolymarket = new Map(polymarket.map(market => [market.marketId, market]));
   const byKalshi = new Map(kalshi.map(market => [market.marketId, market]));
@@ -135,7 +170,7 @@ export async function scanCrossExchangeArbitrage(
     const polymarketYesPrice = poly.bestAsk;
     const kalshiNoPrice = Math.max(0.01, Math.min(0.99, 1 - kalshiMarket.bestBid));
     const totalCost = polymarketYesPrice + kalshiNoPrice;
-    if (totalCost < 0.98) {
+    if (totalCost < maxTotalCost) {
       opportunities.push({
         anomalyType: "cross_exchange_arbitrage",
         polymarket: poly,
@@ -143,7 +178,7 @@ export async function scanCrossExchangeArbitrage(
         semanticMatchConfidence: match.confidence,
         polymarketYesPrice,
         kalshiNoPrice,
-        gap: 0.98 - totalCost,
+        gap: maxTotalCost - totalCost,
         intents: [
           buildIntent(poly, "yes", polymarketYesPrice),
           buildIntent(kalshiMarket, "no", kalshiNoPrice),
@@ -154,7 +189,7 @@ export async function scanCrossExchangeArbitrage(
 
   opportunities.sort((a, b) => b.gap - a.gap);
   console.log(
-    `[ArbitrageScanner] matched_pairs=${matches.length}; opportunities=${opportunities.length}`
+    `[ArbitrageScanner] matched_pairs=${matches.length}; opportunities=${opportunities.length}; threshold=${maxTotalCost}`
   );
   return opportunities;
 }

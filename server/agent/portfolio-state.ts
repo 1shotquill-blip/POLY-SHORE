@@ -18,6 +18,7 @@ import {
 } from "./reconciliation";
 import type { PortfolioSnapshot } from "./types";
 import { PolymarketAdapter } from "../exchange/polymarket";
+import { getKalshiPortfolioState } from "../exchange/kalshi";
 
 export interface ResolvedPortfolioState {
   local: LocalPortfolioState;
@@ -204,9 +205,35 @@ export async function getExchangePortfolioState(
   }
 
   const adapter = await PolymarketAdapter.create();
-  const exchange = await annotateExchangeState(
-    await adapter.reconciler().poll()
-  );
+  const [polyState, kalshiState] = await Promise.allSettled([
+    adapter.reconciler().poll(),
+    getKalshiPortfolioState(),
+  ]);
+
+  const poly: ExchangePortfolioState =
+    polyState.status === "fulfilled"
+      ? polyState.value
+      : { cashUsd: 0, openOrders: [], positions: [] };
+  if (polyState.status === "rejected") {
+    console.warn("[PortfolioState] Polymarket reconciliation failed:", polyState.reason);
+  }
+
+  const kalshi: ExchangePortfolioState =
+    kalshiState.status === "fulfilled"
+      ? kalshiState.value
+      : { cashUsd: 0, openOrders: [], positions: [] };
+  if (kalshiState.status === "rejected") {
+    console.warn("[PortfolioState] Kalshi reconciliation failed:", kalshiState.reason);
+  }
+
+  // Merge both exchanges into a unified view
+  const combined: ExchangePortfolioState = {
+    cashUsd: poly.cashUsd + kalshi.cashUsd,
+    openOrders: [...poly.openOrders, ...kalshi.openOrders],
+    positions: [...poly.positions, ...kalshi.positions],
+  };
+
+  const exchange = await annotateExchangeState(combined);
   const reconciliation = reconcilePortfolio(local, exchange);
 
   return {

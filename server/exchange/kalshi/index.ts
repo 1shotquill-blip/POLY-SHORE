@@ -117,6 +117,81 @@ export async function createKalshiExecutionAdapter(): Promise<ExecutionAdapter> 
   return new PaperExecutionAdapter();
 }
 
+export interface KalshiPortfolioState {
+  cashUsd: number;
+  openOrders: Array<{
+    exchangeOrderId: string;
+    marketId: string;
+    tokenId: string;
+    side: "buy" | "sell";
+    price: number;
+    originalSizeUsd: number;
+    matchedSizeUsd: number;
+    status: string;
+  }>;
+  positions: Array<{
+    marketId: string;
+    tokenId: string;
+    sizeUsd: number;
+    currentValueUsd: number;
+  }>;
+}
+
+export async function getKalshiPortfolioState(): Promise<KalshiPortfolioState> {
+  const client = new KalshiClient();
+
+  const [balanceBody, ordersBody, positionsBody] = await Promise.all([
+    client.request<{ balance?: number; portfolio?: { balance?: number } }>(
+      "/portfolio/balance"
+    ),
+    client.request<{
+      orders?: Array<Record<string, unknown>>;
+    }>("/portfolio/orders?status=resting"),
+    client.request<{
+      market_positions?: Array<Record<string, unknown>>;
+    }>("/portfolio/positions"),
+  ]);
+
+  const cents = Number(
+    balanceBody.balance ?? balanceBody.portfolio?.balance ?? 0
+  );
+  const cashUsd = Number.isFinite(cents) ? cents / 100 : 0;
+
+  const openOrders = (ordersBody.orders ?? []).map(order => {
+    const count = Number(order.count ?? 0);
+    const remainingCount = Number(order.remaining_count ?? count);
+    const yesPrice = Number(order.yes_price ?? 0) / 100;
+    const noPrice = Number(order.no_price ?? 0) / 100;
+    const price = yesPrice > 0 ? yesPrice : noPrice;
+    const filledCount = count - remainingCount;
+    return {
+      exchangeOrderId: String(order.order_id ?? order.id ?? ""),
+      marketId: String(order.ticker ?? ""),
+      tokenId: String(order.ticker ?? ""),
+      side: "buy" as const,
+      price,
+      originalSizeUsd: count * price,
+      matchedSizeUsd: filledCount * price,
+      status: String(order.status ?? "resting"),
+    };
+  });
+
+  const positions = (positionsBody.market_positions ?? []).map(position => {
+    const yesContracts = Number(position.position ?? 0);
+    const noContracts = Number(position.no_position ?? 0);
+    const contracts = Math.max(yesContracts, noContracts);
+    const marketValue = Number(position.market_exposure ?? contracts) / 100;
+    return {
+      marketId: String(position.market_id ?? position.ticker ?? ""),
+      tokenId: String(position.market_id ?? position.ticker ?? ""),
+      sizeUsd: marketValue,
+      currentValueUsd: marketValue,
+    };
+  });
+
+  return { cashUsd, openOrders, positions };
+}
+
 export async function getKalshiCashBalance(): Promise<number | null> {
   if (!ENV.kalshiEmail || !ENV.kalshiPassword) return null;
   const client = new KalshiClient();
