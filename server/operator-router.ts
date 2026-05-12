@@ -49,7 +49,7 @@ import {
   type MarketSelectionScore,
 } from "./agent/market-selection";
 import { PaperExecutionAdapter } from "./agent/paper-execution";
-import { scanPolymarketCandidates } from "./agent/polymarket-client";
+import { resolvePolymarketTokenIds, scanPolymarketCandidates } from "./agent/polymarket-client";
 import { activeProvider, activeProviderLatencyMs } from "./_core/llm";
 import type {
   AgentMarket,
@@ -665,7 +665,34 @@ export const operatorRouter = router({
       const liveMode =
         process.env.EXECUTION_MODE === "live" || ENV.liveTradingEnabled;
 
-      const polyIntent = { ...opportunity.intents[0], sizeUsd: input.sizeUsd };
+      // arbs.xyz opportunities have empty tokenIds — resolve them before execution
+      let resolvedPolyTokenIds: { yesTokenId: string; noTokenId: string } | null = null;
+      if (!opportunity.intents[0].tokenId) {
+        resolvedPolyTokenIds = await resolvePolymarketTokenIds(
+          opportunity.polymarket.marketId
+        ).catch(err => {
+          console.warn("[ArbitrageExec] Could not resolve Polymarket token IDs:", err);
+          return null;
+        });
+        if (!resolvedPolyTokenIds) {
+          return {
+            submitted: false,
+            reason: `Could not resolve Polymarket token IDs for market ${opportunity.polymarket.marketId}. The market may be inactive or unavailable on the CLOB.`,
+          };
+        }
+        // Back-fill the market object so downstream adapters have the full picture
+        opportunity.polymarket.yesTokenId = resolvedPolyTokenIds.yesTokenId;
+        opportunity.polymarket.noTokenId = resolvedPolyTokenIds.noTokenId;
+      }
+
+      const polyTokenId =
+        resolvedPolyTokenIds?.yesTokenId ?? opportunity.intents[0].tokenId;
+
+      const polyIntent = {
+        ...opportunity.intents[0],
+        tokenId: polyTokenId,
+        sizeUsd: input.sizeUsd,
+      };
       const kalshiIntent = { ...opportunity.intents[1], sizeUsd: input.sizeUsd };
 
       let polyReceipt: ExecutionReceipt | null = null;

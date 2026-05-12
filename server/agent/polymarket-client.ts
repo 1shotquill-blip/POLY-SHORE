@@ -371,6 +371,25 @@ export async function fetchClobOrderBook(
   return (await response.json()) as ClobOrderBookResponse;
 }
 
+/**
+ * Resolve yes/no token IDs for a Polymarket market by its numeric ID.
+ * Returns null if the market cannot be found or has no CLOB token IDs.
+ * Used to hydrate arbs.xyz opportunities before live execution.
+ */
+export async function resolvePolymarketTokenIds(
+  marketId: string,
+  options: Pick<MarketScanOptions, "gammaHost" | "httpClient"> = {}
+): Promise<{ yesTokenId: string; noTokenId: string } | null> {
+  const host = options.gammaHost ?? GAMMA_HOST;
+  const http = options.httpClient ?? { fetch };
+  const response = await http.fetch(`${host}/markets/${encodeURIComponent(marketId)}`);
+  if (!response.ok) return null;
+  const body = (await response.json()) as GammaMarketResponse;
+  const tokenIds = parseJsonArray(body.clobTokenIds);
+  if (tokenIds.length < 2) return null;
+  return { yesTokenId: tokenIds[0], noTokenId: tokenIds[1] };
+}
+
 export async function scanPolymarketCandidates(
   options: MarketScanOptions
 ): Promise<AgentMarket[]> {
