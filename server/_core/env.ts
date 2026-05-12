@@ -78,6 +78,8 @@ export const ENV = {
   ),
   grokApiKey: process.env.GROK_API_KEY ?? "",
   grokModel: process.env.GROK_MODEL ?? "grok-3",
+  groqApiKey: process.env.GROQ_API_KEY ?? "",
+  groqModel: process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile",
   // ─── Runtime tuning (spec §3.2) ────────────────────────────────────────
   orderTtlMs: Number(process.env.ORDER_TTL_MS ?? "300000"),
   pollIntervalMs: Number(process.env.POLL_INTERVAL_MS ?? "15000"),

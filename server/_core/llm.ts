@@ -219,7 +219,17 @@ type Provider = OAIProvider | OllamaProvider;
 function buildProviderChain(model?: string): Provider[] {
   const chain: Provider[] = [];
 
-  // 1. Ollama Cloud — primary if OLLAMA_API_KEY is set
+  // 1. Groq — primary if GROQ_API_KEY is set (fast, free tier)
+  if (ENV.groqApiKey) {
+    chain.push({
+      type: "oai",
+      url: "https://api.groq.com/openai/v1/chat/completions",
+      key: ENV.groqApiKey,
+      name: `groq/${ENV.groqModel}`,
+    });
+  }
+
+  // 2. Ollama Cloud — if OLLAMA_API_KEY is set
   if (ENV.ollamaApiKey) {
     chain.push({
       type: "ollama",

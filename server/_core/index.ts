@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import { BotEngine } from "../bot-engine";
 import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
@@ -86,6 +87,10 @@ async function startServer() {
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
   });
+
+  // Auto-start the trading bot (paper mode, safe to run immediately)
+  const bot = new BotEngine();
+  bot.start().catch(e => console.error("[Bot] Auto-start failed:", e));
 }
 
 startServer().catch(console.error);
