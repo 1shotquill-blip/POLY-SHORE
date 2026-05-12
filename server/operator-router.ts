@@ -674,4 +674,24 @@ export const operatorRouter = router({
       await updateOrderStatus(input.nonce, "cancel_requested");
       return { success: true };
     }),
+
+  start: adminProcedure.mutation(async () => {
+    await updateBotConfig({ isRunning: 1, isPaused: 0, emergencyBrakeTriggered: 0 });
+    return { success: true };
+  }),
+
+  stop: adminProcedure.mutation(async () => {
+    await updateBotConfig({ isRunning: 0 });
+    return { success: true };
+  }),
+
+  pause: adminProcedure.mutation(async () => {
+    await updateBotConfig({ isPaused: 1 });
+    return { success: true };
+  }),
+
+  resume: adminProcedure.mutation(async () => {
+    await updateBotConfig({ isPaused: 0, emergencyBrakeTriggered: 0 });
+    return { success: true };
+  }),
 });

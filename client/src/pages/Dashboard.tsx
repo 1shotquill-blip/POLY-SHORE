@@ -366,10 +366,10 @@ function BotControls({ data, onRefresh }: { data: DashboardData | undefined; onR
     onRefresh();
   };
 
-  const startBot = trpc.bot.start.useMutation({ onSuccess: invalidate });
-  const stopBot = trpc.bot.stop.useMutation({ onSuccess: invalidate });
-  const pauseBot = trpc.bot.pause.useMutation({ onSuccess: invalidate });
-  const resumeBot = trpc.bot.resume.useMutation({ onSuccess: invalidate });
+  const startBot = trpc.operator.start.useMutation({ onSuccess: invalidate });
+  const stopBot = trpc.operator.stop.useMutation({ onSuccess: invalidate });
+  const pauseBot = trpc.operator.pause.useMutation({ onSuccess: invalidate });
+  const resumeBot = trpc.operator.resume.useMutation({ onSuccess: invalidate });
   const emergencyStop = trpc.operator.emergencyStop.useMutation({ onSuccess: invalidate });
   const [confirmStop, setConfirmStop] = useState(false);
 
@@ -868,30 +868,49 @@ function ScannerTab({ onRefresh }: { onRefresh: () => void }) {
               </Button>
             </div>
             <div className="max-h-96 overflow-auto rounded border border-white/10">
-              {marketSearch.isLoading && (
+              {marketSearch.isLoading ? (
                 <div className="py-8 text-center text-zinc-500 text-sm">Searching…</div>
-              )}
-              {(marketSearch.data ?? []).map(market => (
-                <button
-                  key={market.marketId}
-                  className={`block w-full border-b border-white/10 p-3 text-left text-sm hover:bg-white/5 transition-colors ${selectedMarket?.marketId === market.marketId ? "bg-[#FF6B35]/10 border-l-2 border-l-[#FF6B35]" : ""}`}
-                  onClick={() => { setSelectedMarket(market); setPrice(market.bestAsk); }}
-                >
-                  <div className="truncate text-white">{market.question}</div>
-                  <div className="mt-0.5 flex gap-3 font-mono text-xs text-zinc-500">
-                    <span className="text-zinc-400">{market.exchange}</span>
-                    <span>bid {market.bestBid.toFixed(3)}</span>
-                    <span>ask {market.bestAsk.toFixed(3)}</span>
-                    <span>liq {usd(market.liquidity)}</span>
-                    <span>vol {usd(market.volume24h)}</span>
-                  </div>
-                </button>
-              ))}
-              {marketQuery.trim().length > 1 && !marketSearch.isLoading && (marketSearch.data ?? []).length === 0 && (
-                <div className="py-8 text-center text-zinc-500 text-sm">No markets found for "{marketQuery}"</div>
-              )}
-              {marketQuery.trim().length <= 1 && (
+              ) : marketQuery.trim().length <= 1 ? (
                 <div className="py-8 text-center text-zinc-500 text-sm">Type 2+ characters to search</div>
+              ) : (marketSearch.data ?? []).length === 0 ? (
+                <div className="py-8 text-center text-zinc-500 text-sm">No markets found for "{marketQuery}"</div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-white/10">
+                      {["Question", "Exchange", "Best Bid", "Best Ask", "Spread", "Volume 24h", "Liquidity", "Expires", ""].map(h => (
+                        <TableHead key={h} className="text-[10px]">{h}</TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(marketSearch.data ?? []).map(market => (
+                      <TableRow
+                        key={market.marketId}
+                        className={`border-white/10 cursor-pointer hover:bg-white/5 transition-colors ${selectedMarket?.marketId === market.marketId ? "bg-[#FF6B35]/10" : ""}`}
+                        onClick={() => { setSelectedMarket(market); setPrice(market.bestAsk); }}
+                      >
+                        <TableCell className="max-w-56 truncate text-xs">{market.question}</TableCell>
+                        <TableCell>
+                          <Badge className={market.exchange === "kalshi" ? "bg-sky-500/20 text-sky-200 text-[10px]" : "bg-[#FF6B35]/20 text-[#FFB199] text-[10px]"}>
+                            {market.exchange}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{market.bestBid.toFixed(3)}</TableCell>
+                        <TableCell className="font-mono text-xs">{market.bestAsk.toFixed(3)}</TableCell>
+                        <TableCell className="font-mono text-xs">{market.spread?.toFixed(3) ?? "--"}</TableCell>
+                        <TableCell className="text-xs">{usd(market.volume24h)}</TableCell>
+                        <TableCell className="text-xs">{usd(market.liquidity)}</TableCell>
+                        <TableCell className="text-xs text-zinc-400">{market.expiresAt ? new Date(market.expiresAt).toLocaleDateString() : "--"}</TableCell>
+                        <TableCell>
+                          <Button size="sm" className="h-6 bg-[#FF6B35] text-black text-[10px] px-2" onClick={e => { e.stopPropagation(); setSelectedMarket(market); setPrice(market.bestAsk); }}>
+                            Select
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               )}
             </div>
           </CardContent>
