@@ -46,6 +46,13 @@ async function runMigrations() {
       `CREATE TABLE IF NOT EXISTS \`decision_audits\` (\`id\` int AUTO_INCREMENT NOT NULL,\`tickId\` varchar(128) NOT NULL,\`marketId\` varchar(256) NOT NULL,\`question\` text NOT NULL,\`action\` enum('skipped','paper_order_submitted','live_order_submitted') NOT NULL,\`reasons\` json,\`estimatedProbability\` decimal(10,6),\`confidence\` decimal(3,2),\`edge\` decimal(10,6),\`bestBid\` decimal(10,6),\`bestAsk\` decimal(10,6),\`spread\` decimal(10,6),\`selectionScore\` decimal(10,6),\`orderNonce\` varchar(256),\`exchangeOrderId\` varchar(256),\`lifecycleStatus\` varchar(64),\`diagnostics\` json,\`createdAt\` timestamp NOT NULL DEFAULT (now()),CONSTRAINT \`decision_audits_id\` PRIMARY KEY(\`id\`))`,
     ];
     for (const sql of tables) await conn.query(sql);
+    // Seed default bot_config row so the bot always has a config to read
+    await conn.query(`
+      INSERT IGNORE INTO \`bot_config\` (id, executionMode, isRunning, isPaused, emergencyBrakeTriggered,
+        edgeThreshold, kellyFraction, maxSpread, maxSingleExposure, maxTotalExposure,
+        drawdownLimit, minVolume24h, minConfidence, orderTimeoutSeconds, pollingIntervalSeconds)
+      VALUES (1, 'paper', 1, 0, 0, 0.05, 0.25, 0.05, 5, 30, 15, 1000, 0.6, 30, 15)
+    `);
     await conn.end();
     console.log("[DB] Schema migration complete");
   } catch (e) {

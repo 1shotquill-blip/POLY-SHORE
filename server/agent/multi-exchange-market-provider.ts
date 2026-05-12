@@ -10,13 +10,18 @@ export interface MultiExchangeMarketProviderOptions {
 }
 
 export class MultiExchangeMarketProvider implements MarketProvider {
+  private kalshiWarnedOnce = false;
+
   constructor(private readonly options: MultiExchangeMarketProviderOptions = {}) {}
 
   async scan(): Promise<AgentMarket[]> {
     const limit = this.options.limit ?? 50;
     const [kalshi, polymarket] = await Promise.all([
       listKalshiMarkets(undefined, { limit }).catch(error => {
-        console.warn("[MultiExchange] Kalshi market scan failed:", error);
+        if (!this.kalshiWarnedOnce) {
+          console.warn("[MultiExchange] Kalshi unavailable (will not repeat):", String(error).slice(0, 120));
+          this.kalshiWarnedOnce = true;
+        }
         return [];
       }),
       scanPolymarketCandidates({
