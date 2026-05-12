@@ -1027,45 +1027,119 @@ function ScannerTab({ onRefresh }: { onRefresh: () => void }) {
 
 // ─── Arbitrage Tab ────────────────────────────────────────────────────────────
 
+function SourceBadge({ source }: { source?: string }) {
+  if (source === "arbs_xyz") {
+    return (
+      <span className="ml-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-violet-500/20 text-violet-300 ring-1 ring-inset ring-violet-500/30">
+        arbs.xyz
+      </span>
+    );
+  }
+  return (
+    <span className="ml-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-zinc-700/50 text-zinc-400 ring-1 ring-inset ring-zinc-600/40">
+      internal
+    </span>
+  );
+}
+
 function ArbitrageTab({ data, onRefresh }: { data: DashboardData | undefined; onRefresh: () => void }) {
   const utils = trpc.useUtils();
+  const [sizeUsd, setSizeUsd] = useState(10);
   const executeArbitrage = trpc.operator.executeArbitragePair.useMutation({
     onSuccess: () => { utils.operator.dashboard.invalidate(); onRefresh(); },
   });
 
+  const arbitrage = data?.arbitrage ?? [];
+  const externalCount = arbitrage.filter(p => (p as { source?: string }).source === "arbs_xyz").length;
+
   return (
     <GlassCard>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <ArrowLeftRight className="size-4 text-[#FF6B35]" /> Cross-Exchange Arbitrage
-        </CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <ArrowLeftRight className="size-4 text-[#FF6B35]" /> Cross-Exchange Arbitrage
+            {externalCount > 0 && (
+              <span className="text-xs font-normal text-violet-300">{externalCount} from arbs.xyz</span>
+            )}
+          </CardTitle>
+          <div className="flex items-center gap-2 text-xs text-zinc-400">
+            <label htmlFor="arb-size" className="whitespace-nowrap">Size USD</label>
+            <input
+              id="arb-size"
+              type="number"
+              min={1}
+              max={10000}
+              step={1}
+              value={sizeUsd}
+              onChange={e => setSizeUsd(Math.max(1, Number(e.target.value)))}
+              className="w-20 rounded border border-white/10 bg-black/40 px-2 py-1 text-right font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#FF6B35]"
+            />
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <Table>
           <TableHeader>
             <TableRow className="border-white/10">
-              {["Pair", "Polymarket YES", "Kalshi NO", "Gap", "Action"].map(h => <TableHead key={h} className="text-xs">{h}</TableHead>)}
+              {["Pair", "Source", "Poly YES", "Kalshi NO", "Gap", "Action"].map(h => (
+                <TableHead key={h} className="text-xs">{h}</TableHead>
+              ))}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(data?.arbitrage ?? []).map(pair => (
-              <TableRow key={`${pair.polymarket.marketId}-${pair.kalshi.marketId}`} className="border-white/10">
-                <TableCell className="max-w-96 truncate text-xs">{pair.polymarket.question}</TableCell>
-                <TableCell className="font-mono text-xs">{pair.polymarketYesPrice.toFixed(3)}</TableCell>
-                <TableCell className="font-mono text-xs">{pair.kalshiNoPrice.toFixed(3)}</TableCell>
-                <TableCell className="font-mono text-xs text-emerald-300">{pair.gap.toFixed(3)}</TableCell>
-                <TableCell>
-                  <Button size="sm" className="h-7 bg-[#FF6B35] text-black text-xs" onClick={() => executeArbitrage.mutate({ polymarketId: pair.polymarket.marketId, kalshiId: pair.kalshi.marketId })}>
-                    Execute Pair
-                  </Button>
+            {arbitrage.map(pair => {
+              const src = (pair as { source?: string }).source;
+              const isExecuting =
+                executeArbitrage.isPending &&
+                (executeArbitrage.variables as { polymarketId: string })?.polymarketId === pair.polymarket.marketId;
+              return (
+                <TableRow key={`${pair.polymarket.marketId}-${pair.kalshi.marketId}`} className="border-white/10">
+                  <TableCell className="max-w-80 truncate text-xs" title={pair.polymarket.question}>
+                    {pair.polymarket.question}
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    <SourceBadge source={src} />
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{pair.polymarketYesPrice.toFixed(3)}</TableCell>
+                  <TableCell className="font-mono text-xs">{pair.kalshiNoPrice.toFixed(3)}</TableCell>
+                  <TableCell className="font-mono text-xs text-emerald-300 font-semibold">
+                    +{pair.gap.toFixed(3)}
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      size="sm"
+                      disabled={isExecuting}
+                      className="h-7 bg-[#FF6B35] text-black text-xs disabled:opacity-50"
+                      onClick={() =>
+                        executeArbitrage.mutate({
+                          polymarketId: pair.polymarket.marketId,
+                          kalshiId: pair.kalshi.marketId,
+                          sizeUsd,
+                        })
+                      }
+                    >
+                      {isExecuting ? "Placing…" : "Execute"}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+            {arbitrage.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="py-12 text-center text-zinc-500">
+                  No cross-exchange arbitrage currently detected.
                 </TableCell>
               </TableRow>
-            ))}
-            {(data?.arbitrage.length ?? 0) === 0 && (
-              <TableRow><TableCell colSpan={5} className="py-12 text-center text-zinc-500">No cross-exchange arbitrage currently detected.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
+        {executeArbitrage.data && (
+          <p className={`mt-3 text-xs ${executeArbitrage.data.partialFailure ? "text-amber-400" : "text-emerald-400"}`}>
+            {executeArbitrage.data.partialFailure
+              ? `Partial fill — ${executeArbitrage.data.partialFailure}`
+              : `Submitted (${executeArbitrage.data.liveMode ? "LIVE" : "paper"})`}
+          </p>
+        )}
       </CardContent>
     </GlassCard>
   );

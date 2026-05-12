@@ -76,6 +76,8 @@ export const ENV = {
       process.env.POLYMARKET_MAX_SPREAD_BPS ??
       "500"
   ),
+  arbsXyzApiKey: process.env.ARBS_XYZ_API_KEY ?? "",
+  arbsXyzBaseUrl: process.env.ARBS_XYZ_BASE_URL ?? "https://arbs.xyz",
   grokApiKey: process.env.GROK_API_KEY ?? "",
   grokModel: process.env.GROK_MODEL ?? "grok-3",
   groqApiKey: process.env.GROQ_API_KEY ?? "",

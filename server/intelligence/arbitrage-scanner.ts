@@ -1,5 +1,6 @@
 import { invokeLLM } from "../_core/llm";
 import type { AgentMarket, TradeIntent } from "../agent/types";
+import { fetchArbsXyzOpportunities } from "./arbs-feed";
 
 export interface ArbitrageScanOptions {
   /** Maximum total cost (yes + no) to qualify as an opportunity. Default 0.98 */
@@ -14,6 +15,8 @@ export interface ArbitrageScanOptions {
 
 export interface CrossExchangeArbitrageOpportunity {
   anomalyType: "cross_exchange_arbitrage";
+  /** Where this opportunity was discovered */
+  source: "internal" | "arbs_xyz";
   polymarket: AgentMarket;
   kalshi: AgentMarket;
   semanticMatchConfidence: number;
@@ -173,6 +176,7 @@ export async function scanCrossExchangeArbitrage(
     if (totalCost < maxTotalCost) {
       opportunities.push({
         anomalyType: "cross_exchange_arbitrage",
+        source: "internal",
         polymarket: poly,
         kalshi: kalshiMarket,
         semanticMatchConfidence: match.confidence,
@@ -187,9 +191,22 @@ export async function scanCrossExchangeArbitrage(
     }
   }
 
+  // Merge external arbs.xyz feed — deduplicate by polymarket+kalshi market pair
+  const externalOpportunities = await fetchArbsXyzOpportunities();
+  const internalKeys = new Set(
+    opportunities.map(o => `${o.polymarket.marketId}::${o.kalshi.marketId}`)
+  );
+  for (const ext of externalOpportunities) {
+    const key = `${ext.polymarket.marketId}::${ext.kalshi.marketId}`;
+    if (!internalKeys.has(key)) {
+      opportunities.push(ext);
+      internalKeys.add(key);
+    }
+  }
+
   opportunities.sort((a, b) => b.gap - a.gap);
   console.log(
-    `[ArbitrageScanner] matched_pairs=${matches.length}; opportunities=${opportunities.length}; threshold=${maxTotalCost}`
+    `[ArbitrageScanner] matched_pairs=${matches.length}; internal=${opportunities.filter(o => o.source === "internal").length}; external=${externalOpportunities.length}; threshold=${maxTotalCost}`
   );
   return opportunities;
 }
