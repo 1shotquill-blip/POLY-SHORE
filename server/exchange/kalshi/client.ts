@@ -35,7 +35,10 @@ export class KalshiClient {
     }
 
     if (options.authenticated !== false) {
-      const authHeaders = buildKalshiAuthHeaders(method, path);
+      // Kalshi signs the full URL path including the /trade-api/v2 prefix
+      const basePath = new URL(this.baseUrl).pathname;
+      const fullSignPath = basePath.replace(/\/$/, "") + path;
+      const authHeaders = buildKalshiAuthHeaders(method, fullSignPath);
       Object.assign(headers, authHeaders);
     }
 

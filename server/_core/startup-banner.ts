@@ -43,9 +43,12 @@ export async function printStartupBanner(): Promise<boolean> {
     try {
       const { buildKalshiAuthHeaders } = await import("../exchange/kalshi/auth");
       const method = "GET";
-      const path = "/portfolio/balance";
-      const headers = buildKalshiAuthHeaders(method, path);
-      const res = await fetch(`${ENV.kalshiApiBase}${path}`, {
+      const endpoint = "/portfolio/balance";
+      // Sign the full path including /trade-api/v2 prefix
+      const basePathPrefix = new URL(ENV.kalshiApiBase).pathname.replace(/\/$/, "");
+      const fullSignPath = basePathPrefix + endpoint;
+      const headers = buildKalshiAuthHeaders(method, fullSignPath);
+      const res = await fetch(`${ENV.kalshiApiBase}${endpoint}`, {
         method,
         headers: { ...headers, "Content-Type": "application/json" },
         signal: AbortSignal.timeout(8000),

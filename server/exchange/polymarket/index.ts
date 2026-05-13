@@ -273,9 +273,9 @@ export async function createExecutionAdapter(): Promise<IExecutionAdapter> {
   if (mode === "live") {
     const readiness = getPolymarketLiveReadiness();
     if (!readiness.ready) {
-      throw new PolymarketConfigurationError(
-        `Cannot start live adapter — missing env vars: ${readiness.missing.join(", ")}`
-      );
+      // Kalshi-only mode: fall back to paper adapter instead of crashing
+      console.warn(`[Polymarket] Live creds absent — running paper adapter (Kalshi-only mode). Missing: ${readiness.missing.join(", ")}`);
+      return new PaperExecutionAdapter();
     }
     return PolymarketAdapter.create();
   }
