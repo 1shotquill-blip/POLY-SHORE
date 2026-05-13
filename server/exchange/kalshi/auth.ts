@@ -1,4 +1,4 @@
-import { createSign } from "node:crypto";
+import { createSign, constants } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { ENV } from "../../_core/env";
 
@@ -63,14 +63,13 @@ export function buildKalshiAuthHeaders(
   const pathWithoutQuery = path.split("?")[0];
   const payload = timestamp + method.toUpperCase() + pathWithoutQuery;
 
-  const sign = createSign("RSA-PSS");
+  const sign = createSign("SHA256");
   sign.update(payload);
   sign.end();
   const signature = sign.sign(
     {
       key: privateKeyPem,
-      dsaEncoding: "ieee-p1363",
-      padding: 6, // RSA_PKCS1_PSS_PADDING
+      padding: constants.RSA_PKCS1_PSS_PADDING,
       saltLength: 32,
     },
     "base64"
