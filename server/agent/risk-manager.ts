@@ -135,8 +135,17 @@ export function evaluateRisk(
     ensemble.estimatedProbability,
     selectedPrice
   );
-  const confidenceAdjustedKelly =
-    rawKelly * ensemble.confidence * limits.fractionalKelly;
+  const baseKelly = rawKelly * ensemble.confidence * limits.fractionalKelly;
+  const disagreementMultiplier =
+    ensemble.modelDisagreement > 0.15
+      ? 0.5
+      : ensemble.modelDisagreement <= 0.05
+        ? 1.25
+        : 1.0;
+  const confidenceAdjustedKelly = Math.min(
+    baseKelly * disagreementMultiplier,
+    0.5
+  );
   const kellySizeUsd = portfolio.bankrollUsd * confidenceAdjustedKelly;
   const resolutionSpeedMultiplier = computeResolutionSpeedMultiplier(
     market.expiresAt,

@@ -15,6 +15,7 @@ import { ProductionDeepEdgeGate } from "./agent/deep-edge-gate";
 import { ClobPortfolioProvider } from "./agent/portfolio-provider";
 import { MultiExchangeMarketProvider } from "./agent/multi-exchange-market-provider";
 import { recoverOpenOrders } from "./agent/startup-recovery";
+import { startWhaleMonitor } from "./intelligence/whale-monitor";
 import {
   buildVelocityExitCandidate,
   submitVelocityExitOrder,
@@ -80,6 +81,7 @@ export class BotEngine {
 
     this.executionAdapter = await createExecutionAdapter();
     await this.recoverExecutionState();
+    startWhaleMonitor();
 
     const portfolioProvider = new ClobPortfolioProvider();
     const intelligence = new LLMIntelligenceEngine();
@@ -517,8 +519,10 @@ ${line("Max drawdown", maxDD)}
       totalExposure: totalExposure.toString(),
     });
 
-    const maxDrawdown =
-      this.config.riskLimits?.maxDrawdownPct ?? ENV.maxDrawdownPct;
+    // ENV.maxDrawdownPct is a getter — re-reads process.env on every access.
+    const maxDrawdown = ENV.maxDrawdownPct > 0
+      ? ENV.maxDrawdownPct
+      : (this.config.riskLimits?.maxDrawdownPct ?? ENV.maxDrawdownPct);
     if (drawdown >= maxDrawdown && !this.emergencyBrakeTriggered) {
       await this.triggerEmergencyBrake(drawdown);
     }

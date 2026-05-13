@@ -12,7 +12,7 @@ import {
 } from "./opportunity-ranking";
 import {
   persistLifecycleUpdate,
-  persistPaperOrderIntent,
+  persistOrderIntent,
 } from "./order-persistence";
 import {
   ProductionDeepEdgeGate,
@@ -20,6 +20,7 @@ import {
   type DeepEdgeGate,
 } from "./deep-edge-gate";
 import { getBayesianPrior } from "../db";
+import { ENV } from "../_core/env";
 import type {
   AgentMarket,
   EnsembleDecision,
@@ -46,7 +47,7 @@ export interface AgentDecisionAudit {
   marketId: string;
   question: string;
   market?: AgentMarket;
-  action: "skipped" | "paper_order_submitted";
+  action: "skipped" | "paper_order_submitted" | "live_order_submitted";
   reasons: string[];
   risk?: RiskDecision;
   ensemble?: EnsembleDecision;
@@ -104,6 +105,12 @@ export class AgentOrchestrator {
 
   async tick(now = new Date()): Promise<AgentTickResult> {
     const tickId = createTickId(now);
+    // Re-read runtime-tunable limits from ENV so operator changes apply next tick.
+    const riskLimits: RiskLimits = {
+      ...this.riskLimits,
+      maxOrderSizeUsd: ENV.maxPositionUsd > 0 ? ENV.maxPositionUsd : this.riskLimits.maxOrderSizeUsd,
+      maxDrawdownPct: ENV.maxDrawdownPct > 0 ? ENV.maxDrawdownPct : this.riskLimits.maxDrawdownPct,
+    };
     const markets = await this.marketProvider.scan(now);
     const portfolio = await this.portfolioProvider.snapshot(now);
     const audits: AgentDecisionAudit[] = [];
@@ -144,7 +151,7 @@ export class AgentOrchestrator {
         market,
         ensemble,
         portfolio,
-        this.riskLimits,
+        riskLimits,
         now
       );
       if (!risk.allowed || !risk.intent) {
@@ -231,14 +238,17 @@ export class AgentOrchestrator {
         now
       );
       if (this.persistOrders)
-        await persistPaperOrderIntent(audit.risk.intent, receipt);
+        await persistOrderIntent(audit.risk.intent, receipt);
 
-      if (receipt.status !== "paper_accepted") {
+      const accepted =
+        receipt.status === "paper_accepted" ||
+        receipt.status === "exchange_accepted";
+      if (!accepted) {
         audits.push({
           ...audit,
           action: "skipped",
           reasons: [
-            receipt.rejectionReason ?? "paper execution rejected order",
+            receipt.rejectionReason ?? "execution adapter rejected order",
           ],
           receipt,
         });
@@ -259,7 +269,10 @@ export class AgentOrchestrator {
 
       audits.push({
         ...audit,
-        action: "paper_order_submitted",
+        action:
+          receipt.status === "exchange_accepted"
+            ? "live_order_submitted"
+            : "paper_order_submitted",
         reasons: [],
         receipt,
         lifecycleUpdate,
@@ -284,13 +297,39 @@ export class AgentOrchestrator {
     markets: AgentMarket[],
     now: Date
   ): Promise<DeepEdgeDecision> {
-    return this.deepEdgeGate.evaluate(
-      market,
-      ensemble,
-      {
-        peerMarkets: markets,
-      },
-      now
-    );
+    try {
+      const { getWhaleTradesForMarket } = await import("../intelligence/whale-monitor");
+      return this.deepEdgeGate.evaluate(
+        market,
+        ensemble,
+        {
+          peerMarkets: markets,
+          whaleTrades: getWhaleTradesForMarket(market.marketId),
+        },
+        now
+      );
+    } catch (err) {
+      console.warn(
+        `[Orchestrator] DeepEdge evaluation failed for ${market.marketId}, defaulting to block:`,
+        err
+      );
+      return {
+        allowed: false,
+        reasons: ["deep edge evaluation error"],
+        anomaly: {
+          marketId: market.marketId,
+          totalScore: 0,
+          components: {
+            crossMarket: { score: 0, reason: "evaluation error" },
+            temporal: { score: 0, reason: "evaluation error" },
+            divergence: { score: 0, reason: "evaluation error" },
+            whale: { score: 0, reason: "evaluation error" },
+          },
+          anomalyType: "none",
+          generatedAt: now,
+        },
+        memoryMatches: [],
+      };
+    }
   }
 }

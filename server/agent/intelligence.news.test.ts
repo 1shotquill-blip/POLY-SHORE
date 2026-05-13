@@ -66,20 +66,22 @@ describe("LLM intelligence with news context", () => {
       confidenceFloor: 0.6,
       blendWeight: 0.2,
     });
+    const estimationResponse = createLLMResponse({
+      outcome: "yes",
+      probability: 0.72,
+      confidence: 0.81,
+      rationale: "Recent ETF news and momentum favor YES",
+    });
     mockInvokeLLM.mockResolvedValueOnce(
       createLLMResponse({
         factors: ["ETF inflows are the key driver"],
         searchQueries: ["btc etf inflows"],
       })
     );
-    mockInvokeLLM.mockResolvedValueOnce(
-      createLLMResponse({
-        outcome: "yes",
-        probability: 0.72,
-        confidence: 0.81,
-        rationale: "Recent ETF news and momentum favor YES",
-      })
-    );
+    // Three estimation calls — one per ensemble model.
+    mockInvokeLLM.mockResolvedValueOnce(estimationResponse);
+    mockInvokeLLM.mockResolvedValueOnce(estimationResponse);
+    mockInvokeLLM.mockResolvedValueOnce(estimationResponse);
 
     const engine = new LLMIntelligenceEngine();
     const market = {
@@ -106,7 +108,8 @@ describe("LLM intelligence with news context", () => {
     expect(mockIngestNewsForQueries).toHaveBeenCalledWith(["btc etf inflows"], {
       now: expect.any(Date),
     });
-    expect(mockInvokeLLM).toHaveBeenCalledTimes(2);
+    // 1 factor-extraction call + 3 ensemble estimation calls (one per model).
+    expect(mockInvokeLLM).toHaveBeenCalledTimes(4);
 
     const probabilityCall = mockInvokeLLM.mock.calls[1]?.[0];
     expect(probabilityCall.messages[1].content).toContain(
@@ -135,20 +138,21 @@ describe("LLM intelligence with news context", () => {
       confidenceFloor: 0.6,
       blendWeight: 0.1,
     });
+    const est2 = createLLMResponse({
+      outcome: "yes",
+      probability: 0.61,
+      confidence: 0.7,
+      rationale: "No fresh news, but the vote schedule still supports YES",
+    });
     mockInvokeLLM.mockResolvedValueOnce(
       createLLMResponse({
         factors: ["debate timing"],
         searchQueries: ["senate vote"],
       })
     );
-    mockInvokeLLM.mockResolvedValueOnce(
-      createLLMResponse({
-        outcome: "yes",
-        probability: 0.61,
-        confidence: 0.7,
-        rationale: "No fresh news, but the vote schedule still supports YES",
-      })
-    );
+    mockInvokeLLM.mockResolvedValueOnce(est2);
+    mockInvokeLLM.mockResolvedValueOnce(est2);
+    mockInvokeLLM.mockResolvedValueOnce(est2);
 
     const engine = new LLMIntelligenceEngine();
     const market = {

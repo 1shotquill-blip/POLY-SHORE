@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import { BotEngine } from "../bot-engine";
+import { registerBot } from "./bot-singleton";
 import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
@@ -95,8 +96,9 @@ async function startServer() {
     console.log(`Server running on http://localhost:${port}/`);
   });
 
-  // Auto-start the trading bot (paper mode, safe to run immediately)
+  // Auto-start the trading bot and register the singleton for route handlers.
   const bot = new BotEngine();
+  registerBot(bot);
   bot.start().catch(e => console.error("[Bot] Auto-start failed:", e));
 }
 

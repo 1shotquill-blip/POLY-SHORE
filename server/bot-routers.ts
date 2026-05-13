@@ -8,6 +8,7 @@ import {
   getRecentSignals,
 } from "./db";
 import { getPolymarketLiveReadiness } from "./exchange/polymarket";
+import { getBot } from "./_core/bot-singleton";
 
 export const botRouter = router({
   // Get bot status
@@ -25,28 +26,48 @@ export const botRouter = router({
   // Start bot
   start: protectedProcedure.mutation(async ({ ctx }) => {
     if (ctx.user.role !== "admin") throw new Error("Unauthorized");
-    await updateBotConfig({ isRunning: 1, isPaused: 0 });
+    const bot = getBot();
+    if (bot) {
+      await bot.start();
+    } else {
+      await updateBotConfig({ isRunning: 1, isPaused: 0 });
+    }
     return { success: true };
   }),
 
   // Stop bot
   stop: protectedProcedure.mutation(async ({ ctx }) => {
     if (ctx.user.role !== "admin") throw new Error("Unauthorized");
-    await updateBotConfig({ isRunning: 0 });
+    const bot = getBot();
+    if (bot) {
+      await bot.stop();
+    } else {
+      await updateBotConfig({ isRunning: 0 });
+    }
     return { success: true };
   }),
 
   // Pause bot
   pause: protectedProcedure.mutation(async ({ ctx }) => {
     if (ctx.user.role !== "admin") throw new Error("Unauthorized");
-    await updateBotConfig({ isPaused: 1 });
+    const bot = getBot();
+    if (bot) {
+      await bot.pause();
+    } else {
+      await updateBotConfig({ isPaused: 1 });
+    }
     return { success: true };
   }),
 
   // Resume bot
   resume: protectedProcedure.mutation(async ({ ctx }) => {
     if (ctx.user.role !== "admin") throw new Error("Unauthorized");
-    await updateBotConfig({ isPaused: 0, emergencyBrakeTriggered: 0 });
+    const bot = getBot();
+    if (bot) {
+      await bot.resume();
+    } else {
+      await updateBotConfig({ isPaused: 0, emergencyBrakeTriggered: 0 });
+    }
     return { success: true };
   }),
 

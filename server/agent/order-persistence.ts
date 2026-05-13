@@ -3,16 +3,22 @@ import type { InsertOrder } from "../../drizzle/schema";
 import type { OrderLifecycleUpdate } from "./execution-adapter";
 import type { ExecutionReceipt, TradeIntent } from "./types";
 
-export async function persistPaperOrderIntent(
+export async function persistOrderIntent(
   intent: TradeIntent,
   receipt: ExecutionReceipt
 ): Promise<void> {
-  if (receipt.status !== "paper_accepted" || !receipt.exchangeOrderId) {
-    await updateOrderSyncState(receipt.localOrderId, {
-      status: "rejected",
-      lifecycleState: "REJECTED",
-      rejectionReason: receipt.rejectionReason ?? "Paper order rejected",
-    });
+  const accepted =
+    receipt.status === "paper_accepted" || receipt.status === "exchange_accepted";
+  if (!accepted || !receipt.exchangeOrderId) {
+    // Only attempt to update state if this is a known DB entry (exchange_accepted
+    // orders haven't been inserted yet, so skip the update for true rejections).
+    if (receipt.status === "rejected") {
+      await updateOrderSyncState(receipt.localOrderId, {
+        status: "rejected",
+        lifecycleState: "REJECTED",
+        rejectionReason: receipt.rejectionReason ?? "Order rejected",
+      }).catch(() => {});
+    }
     return;
   }
 
@@ -36,6 +42,9 @@ export async function persistPaperOrderIntent(
 
   await insertOrder(order);
 }
+
+/** @deprecated Use persistOrderIntent — handles both paper and live receipts. */
+export const persistPaperOrderIntent = persistOrderIntent;
 
 export async function persistLifecycleUpdate(
   update: OrderLifecycleUpdate,

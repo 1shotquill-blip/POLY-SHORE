@@ -114,11 +114,11 @@ describe("socialSignal engagement weighting", () => {
 // ─── socialSignal contribution to total score ────────────────────────────────
 
 describe("socialSignal contribution to hybrid score", () => {
-  it("contributes 10 points to score at signal=1.0 with all other signals=0", () => {
+  it("contributes 9 points to score at signal=1.0 with all other signals=0", () => {
     const tweet = makeTweet({ likes: 5000 });
     const result = hybridScore({ ensemble: makeEnsemble(0, [tweet]) });
-    // score = socialSignal(1.0) * 0.10 * 100 = 10
-    expect(result.score).toBeCloseTo(10, 1);
+    // score = socialSignal(1.0) * 0.09 * 100 = 9
+    expect(result.score).toBeCloseTo(9, 1);
   });
 
   it("adding viral tweet increases score vs no tweets", () => {
@@ -166,10 +166,10 @@ describe("socialTopTweets in breakdown", () => {
 // ─── Full weighted score sanity check ────────────────────────────────────────
 
 describe("hybridScore full weighted calculation", () => {
-  it("max confidence + max social = 30 points (0.20 + 0.10) × 100", () => {
+  it("max confidence + max social = 27 points (0.18 + 0.09) × 100", () => {
     const tweet = makeTweet({ likes: 5000 });
     const result = hybridScore({ ensemble: makeEnsemble(1.0, [tweet]) });
-    // llmConf(1.0)*0.20 + social(1.0)*0.10 = 0.30 → 30 pts (rest are 0)
-    expect(result.score).toBeCloseTo(30, 1);
+    // llmConf(1.0)*0.18 + social(1.0)*0.09 = 0.27 → 27 pts (rest are 0)
+    expect(result.score).toBeCloseTo(27, 1);
   });
 });

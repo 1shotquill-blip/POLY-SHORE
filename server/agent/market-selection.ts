@@ -1,5 +1,5 @@
 import type { AgentMarket, EnsembleDecision, RiskDecision } from "./types";
-import { getClobReferencePrice } from "./book-pricing";
+import { getClobReferencePrice, computeMicrostructureScore } from "./book-pricing";
 
 export interface MarketSelectionWeights {
   edge: number;
@@ -8,15 +8,17 @@ export interface MarketSelectionWeights {
   timeRemaining: number;
   volumeVelocity: number;
   consensusDivergence: number;
+  microstructure: number;
 }
 
 export const DEFAULT_MARKET_SELECTION_WEIGHTS: MarketSelectionWeights = {
-  edge: 0.3,
-  confidence: 0.25,
-  liquidity: 0.1,
-  timeRemaining: 0.1,
-  volumeVelocity: 0.1,
-  consensusDivergence: 0.15,
+  edge: 0.276,
+  confidence: 0.23,
+  liquidity: 0.092,
+  timeRemaining: 0.092,
+  volumeVelocity: 0.092,
+  consensusDivergence: 0.138,
+  microstructure: 0.08,
 };
 
 export interface MarketSelectionScore {
@@ -27,6 +29,7 @@ export interface MarketSelectionScore {
   timeRemainingScore: number;
   volumeVelocityScore: number;
   consensusDivergenceScore: number;
+  microstructureScore: number;
   // gate results
   passedLiquidityGate: boolean;
   recencyPenalty: number;
@@ -128,6 +131,7 @@ export function scoreOpportunity(
     ensemble?.estimatedProbability ?? risk.intent?.estimatedProbability,
     getClobReferencePrice(market)
   );
+  const microstructureScore = computeMicrostructureScore(market);
 
   // Signal 3: recency penalty multiplied into total.
   const recencyPenalty = computeRecencyPenalty(
@@ -142,7 +146,8 @@ export function scoreOpportunity(
       liquidityScore * weights.liquidity +
       timeRemainingScore * weights.timeRemaining +
       volumeVelocityScore * weights.volumeVelocity +
-      consensusDivergenceScore * weights.consensusDivergence
+      consensusDivergenceScore * weights.consensusDivergence +
+      microstructureScore * weights.microstructure
     : 0;
 
   return {
@@ -153,6 +158,7 @@ export function scoreOpportunity(
     timeRemainingScore,
     volumeVelocityScore,
     consensusDivergenceScore,
+    microstructureScore,
     passedLiquidityGate,
     recencyPenalty,
   };

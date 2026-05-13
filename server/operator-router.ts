@@ -3,6 +3,7 @@ import { createPublicClient, formatEther, http } from "viem";
 import { polygon } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { adminProcedure, router } from "./_core/trpc";
+import { getBot } from "./_core/bot-singleton";
 import { ENV } from "./_core/env";
 import {
   getBotConfig,
@@ -48,6 +49,7 @@ import {
   scoreOpportunity,
   type MarketSelectionScore,
 } from "./agent/market-selection";
+import { computeMicrostructureScore } from "./agent/book-pricing";
 import { PaperExecutionAdapter } from "./agent/paper-execution";
 import { resolvePolymarketTokenIds, scanPolymarketCandidates } from "./agent/polymarket-client";
 import { activeProvider, activeProviderLatencyMs } from "./_core/llm";
@@ -92,6 +94,7 @@ type HybridBreakdown = {
   consensusDivergence: number;
   recencyPenalty: number;
   socialSignal: number;
+  microstructure: number;
   socialTweetCount: number;
   socialTopTweets: Array<{ snippet: string; engagement: number }>;
 };
@@ -229,6 +232,7 @@ export function hybridScore(input: {
         input.market.orderbookUpdatedAt
       )
     : 0;
+  const microstructure = input.market ? computeMicrostructureScore(input.market) : 0;
   // Collect all tweets across all probability estimates
   const allTweets = (input.ensemble?.estimates ?? []).flatMap(
     e => e.socialSignals ?? []
@@ -253,14 +257,15 @@ export function hybridScore(input: {
     .slice(0, 3);
 
   const score =
-    (llmProbabilityConfidence * 0.2 +
-      deepEdgeAnomaly * 0.18 +
-      marketSelection * 0.18 +
-      liquidity * 0.1 +
-      volumeVelocity * 0.1 +
-      consensusDivergence * 0.1 +
-      socialSignal * 0.1 +
-      recencyPenalty * 0.04) *
+    (llmProbabilityConfidence * 0.18 +
+      deepEdgeAnomaly * 0.17 +
+      marketSelection * 0.17 +
+      liquidity * 0.09 +
+      volumeVelocity * 0.09 +
+      consensusDivergence * 0.09 +
+      socialSignal * 0.09 +
+      recencyPenalty * 0.04 +
+      microstructure * 0.08) *
     100;
 
   return {
@@ -274,6 +279,7 @@ export function hybridScore(input: {
       consensusDivergence,
       recencyPenalty,
       socialSignal,
+      microstructure,
       socialTweetCount: allTweets.length,
       socialTopTweets,
     },
@@ -517,12 +523,11 @@ export const operatorRouter = router({
   }),
 
   emergencyStop: adminProcedure.mutation(async () => {
-    await new PolymarketKillswitch().disarm(async () => {
-      const openOrders = await getOpenOrders();
-      await Promise.all(
-        openOrders.map(order => updateOrderStatus(order.nonce, "cancel_requested"))
-      );
-    });
+    // First: stop the in-memory bot (cancels all open orders on exchange and clears intervals).
+    const bot = getBot();
+    if (bot) {
+      await bot.stop();
+    }
     await updateBotConfig({ isRunning: 0, emergencyBrakeTriggered: 1 });
     return { success: true };
   }),

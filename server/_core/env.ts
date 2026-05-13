@@ -1,3 +1,5 @@
+// Fields that operator-router may update at runtime via process.env mutation are
+// defined as getters so the running process always sees the current value.
 export const ENV = {
   appId: process.env.VITE_APP_ID ?? "",
   cookieSecret: process.env.JWT_SECRET ?? "",
@@ -17,6 +19,8 @@ export const ENV = {
     process.env.LLM_REASONER_MODEL ?? "glm-5",
   llmExtractorModel:
     process.env.LLM_EXTRACTOR_MODEL ?? "qwen3.5:27b",
+  llmEnsembleModel:
+    process.env.LLM_ENSEMBLE_MODEL ?? "qwen3.5:122b",
   llmFallbackProviders:
     process.env.LLM_FALLBACK_PROVIDERS ?? "openrouter,grok",
   openrouterApiKey: process.env.OPENROUTER_API_KEY ?? "",
@@ -82,11 +86,11 @@ export const ENV = {
   grokModel: process.env.GROK_MODEL ?? "grok-3",
   groqApiKey: process.env.GROQ_API_KEY ?? "",
   groqModel: process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile",
-  // ─── Runtime tuning (spec §3.2) ────────────────────────────────────────
-  orderTtlMs: Number(process.env.ORDER_TTL_MS ?? "300000"),
-  pollIntervalMs: Number(process.env.POLL_INTERVAL_MS ?? "15000"),
-  maxPositionUsd: Number(process.env.MAX_POSITION_USD ?? "100"),
-  maxDrawdownPct: Number(process.env.MAX_DRAWDOWN_PCT ?? "0.15") * 100,
+  // ─── Runtime tuning (spec §3.2) — getters so operator-router mutations apply ─
+  get orderTtlMs() { return Number(process.env.ORDER_TTL_MS ?? "300000"); },
+  get pollIntervalMs() { return Number(process.env.POLL_INTERVAL_MS ?? "15000"); },
+  get maxPositionUsd() { return Number(process.env.MAX_POSITION_USD ?? "100"); },
+  get maxDrawdownPct() { return Number(process.env.MAX_DRAWDOWN_PCT ?? "0.15") * 100; },
 };
 
 /**

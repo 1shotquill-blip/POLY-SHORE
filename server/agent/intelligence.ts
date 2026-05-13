@@ -206,9 +206,9 @@ async function estimateProbability(
   factors: string[],
   news: NewsSignal[],
   socialSignals: SocialSignal[],
-  calibration?: CategoryCalibrationContext
+  calibration?: CategoryCalibrationContext,
+  model: string = ENV.llmPrimaryModel
 ): Promise<ProbabilityEstimationResult> {
-  const model = ENV.llmPrimaryModel;
   const t0 = Date.now();
   const result = await invokeLLM({
     messages: [
@@ -293,6 +293,103 @@ function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+}
+
+interface MultiModelEstimateResult {
+  estimatedProbability: number;
+  confidence: number;
+  modelDisagreement: number;
+  estimates: ProbabilityEstimate[];
+  primaryOutcome: OutcomeSide;
+}
+
+async function estimateProbabilityMultiModel(
+  market: AgentMarket,
+  factors: string[],
+  news: NewsSignal[],
+  socialSignals: SocialSignal[],
+  calibration: CategoryCalibrationContext | undefined,
+  freshnessSeconds: number
+): Promise<MultiModelEstimateResult> {
+  const models = [
+    ENV.llmPrimaryModel,
+    ENV.llmReasonerModel,
+    ENV.llmEnsembleModel,
+  ];
+
+  const results = await Promise.allSettled(
+    models.map(model =>
+      estimateProbability(market, factors, news, socialSignals, calibration, model)
+    )
+  );
+
+  type SuccessEntry = { model: string; est: ProbabilityEstimationResult };
+  const successes: SuccessEntry[] = [];
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled") {
+      successes.push({ model: models[i], est: r.value });
+    } else {
+      console.warn(`[Intelligence] model ${models[i]} failed:`, r.reason);
+    }
+  });
+
+  if (successes.length === 0) {
+    throw new Error("[Intelligence] all models failed in ensemble");
+  }
+
+  const rawProbabilities = successes.map(({ est }) =>
+    est.outcome === "no" ? 1 - est.probability : est.probability
+  );
+  const confidences = successes.map(({ est }) => est.confidence);
+
+  const pMedian = median(rawProbabilities);
+  const cMedian = median(confidences);
+
+  // Max pairwise disagreement
+  let maxDisagreement = 0;
+  for (let i = 0; i < rawProbabilities.length; i++) {
+    for (let j = i + 1; j < rawProbabilities.length; j++) {
+      maxDisagreement = Math.max(
+        maxDisagreement,
+        Math.abs(rawProbabilities[i] - rawProbabilities[j])
+      );
+    }
+  }
+
+  const primarySuccess = successes[0];
+  const primaryOutcome = primarySuccess.est.outcome;
+
+  const estimates: ProbabilityEstimate[] = successes.map(({ model, est }) => {
+    const p = est.outcome === "no" ? 1 - est.probability : est.probability;
+    return {
+      source: `llm:${model}`,
+      probability: p,
+      confidence: est.confidence,
+      evidence: [est.rationale],
+      freshnessSeconds,
+    };
+  });
+
+  console.log(
+    `[Intelligence] ensemble: models=${successes.length} p_median=${pMedian.toFixed(3)} disagreement=${maxDisagreement.toFixed(3)}`
+  );
+
+  return {
+    estimatedProbability: pMedian,
+    confidence: cMedian,
+    modelDisagreement: maxDisagreement,
+    estimates,
+    primaryOutcome,
+  };
+}
+
 async function collectSocialSignals(
   searchQueries: string[],
   lookbackHours = 6
@@ -325,7 +422,8 @@ export class LLMIntelligenceEngine implements IntelligenceEngine {
     let factors: FactorExtractionResult;
     try {
       factors = await extractFactors(market);
-    } catch {
+    } catch (err) {
+      console.error(`[Intelligence] Factor extraction failed for market ${market.marketId}:`, err);
       return null;
     }
 
@@ -354,61 +452,66 @@ export class LLMIntelligenceEngine implements IntelligenceEngine {
     let calibration: CategoryCalibrationContext | undefined;
     try {
       calibration = await buildCategoryCalibrationContext(market.category);
-    } catch {
+    } catch (err) {
+      console.warn(`[Intelligence] Calibration unavailable for category ${market.category ?? "unknown"}:`, err);
       calibration = undefined;
     }
 
-    let est: ProbabilityEstimationResult;
+    const freshnessSeconds = (Date.now() - callStart) / 1000;
+
+    let ensemble: MultiModelEstimateResult;
     try {
-      est = await estimateProbability(
+      ensemble = await estimateProbabilityMultiModel(
         market,
         factors.factors,
         news,
         socialSignals,
-        calibration
+        calibration,
+        freshnessSeconds
       );
-    } catch {
+    } catch (err) {
+      console.error(`[Intelligence] Ensemble estimation failed for market ${market.marketId}:`, err);
       return null;
     }
 
-    const freshnessSeconds = (Date.now() - callStart) / 1000;
-    const probability = calibration
-      ? calibrateProbability(clamp(est.probability, 0.01, 0.99), calibration)
-      : clamp(est.probability, 0.01, 0.99);
+    const rawProbability = clamp(ensemble.estimatedProbability, 0.01, 0.99);
+    const rawConfidence = clamp(ensemble.confidence, 0, 1);
+
+    const estimatedProbability = calibration
+      ? calibrateProbability(rawProbability, calibration)
+      : rawProbability;
     const confidence = calibration
-      ? calibrateConfidence(clamp(est.confidence, 0, 1), calibration)
-      : clamp(est.confidence, 0, 1);
+      ? calibrateConfidence(rawConfidence, calibration)
+      : rawConfidence;
 
-    // Normalise: if the LLM picked "no", flip to express as YES probability
-    const estimatedProbability =
-      est.outcome === "no" ? 1 - probability : probability;
-
-    const estimate: ProbabilityEstimate = {
-      source: "llm",
-      probability: estimatedProbability,
-      confidence,
-      evidence: [
-        est.rationale,
-        ...factors.factors,
-        ...news.map(item => item.content),
-        ...socialSignals.map(
-          tweet =>
-            `Recent social signal @${tweet.author_username}: ${tweet.text}`
-        ),
-      ],
-      freshnessSeconds,
-      socialSignals,
-    };
+    // Annotate the first estimate with full evidence (social signals, news, factors)
+    const enrichedEstimates: ProbabilityEstimate[] = ensemble.estimates.map(
+      (est, i) =>
+        i === 0
+          ? {
+              ...est,
+              evidence: [
+                ...est.evidence,
+                ...factors.factors,
+                ...news.map(item => item.content),
+                ...socialSignals.map(
+                  tweet =>
+                    `Recent social signal @${tweet.author_username}: ${tweet.text}`
+                ),
+              ],
+              socialSignals,
+            }
+          : est
+    );
 
     return {
       marketId: market.marketId,
-      outcome: est.outcome,
+      outcome: ensemble.primaryOutcome,
       estimatedProbability,
       confidence,
-      estimates: [estimate],
-      modelDisagreement: 0,
+      estimates: enrichedEstimates,
+      modelDisagreement: ensemble.modelDisagreement,
       evidenceSummary: [
-        est.rationale,
         socialSignals.length > 0
           ? `Recent social signal: ${socialSignals.length} tweets factored into forecast`
           : "Recent social signal unavailable or empty",
