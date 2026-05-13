@@ -1,3 +1,4 @@
+import { ENV } from "../../_core/env";
 import type { AgentMarket } from "../../agent/types";
 import { KalshiClient } from "./client";
 
@@ -59,6 +60,10 @@ export async function listKalshiMarkets(
   client = new KalshiClient(),
   options: { limit?: number; cursor?: string; status?: string } = {}
 ): Promise<AgentMarket[]> {
+  // In paper mode without credentials, return empty list gracefully
+  if (ENV.kalshiExecutionMode !== "live") {
+    return [];
+  }
   const params = new URLSearchParams({
     limit: String(options.limit ?? 100),
     status: options.status ?? "open",

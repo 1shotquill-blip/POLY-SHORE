@@ -12,6 +12,8 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "preflight": "tsx scripts/preflight.ts",
+    "kalshi:check": "tsx scripts/kalshi-check.ts",
+    "db:check": "tsx scripts/db-check.ts",
     "db:push": "drizzle-kit generate && drizzle-kit migrate"
   },
   "dependencies": {

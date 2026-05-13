@@ -17,7 +17,12 @@ import {
   placeKalshiLimitOrder,
 } from "./orders";
 import { listKalshiMarkets, getKalshiMarket } from "./markets";
-import { KalshiConfigurationError } from "./auth";
+import {
+  KalshiConfigurationError,
+  hasKalshiCredentials,
+} from "./auth";
+
+// ─── Killswitch ───────────────────────────────────────────────────────────────
 
 export class KalshiKillswitch {
   private disarmed = false;
@@ -34,13 +39,20 @@ export class KalshiKillswitch {
   }
 
   assertCanSubmit(): void {
-    if (!this.isArmed()) {
+    if (ENV.kalshiExecutionMode === "live" && !this.isArmed()) {
       throw new KalshiConfigurationError(
         "KALSHI_KILLSWITCH_ARMED must be true before Kalshi live order submission"
       );
     }
+    if (!this.isArmed()) {
+      throw new KalshiConfigurationError(
+        "Kalshi killswitch is not armed — order submission blocked"
+      );
+    }
   }
 }
+
+// ─── Live execution adapter ───────────────────────────────────────────────────
 
 export class KalshiLiveExecutionAdapter implements ExecutionAdapter {
   readonly killswitch: KalshiKillswitch;
@@ -105,17 +117,21 @@ export class KalshiLiveExecutionAdapter implements ExecutionAdapter {
   }
 }
 
+// ─── Factory ──────────────────────────────────────────────────────────────────
+
 export async function createKalshiExecutionAdapter(): Promise<ExecutionAdapter> {
   if (ENV.kalshiExecutionMode === "live") {
-    if (!ENV.kalshiEmail || !ENV.kalshiPassword) {
+    if (!hasKalshiCredentials()) {
       throw new KalshiConfigurationError(
-        "KALSHI_EMAIL and KALSHI_PASSWORD are required for Kalshi live execution"
+        "KALSHI_API_KEY_ID and KALSHI_PRIVATE_KEY_PEM (or KALSHI_PRIVATE_KEY_PATH) are required for Kalshi live execution"
       );
     }
     return new KalshiLiveExecutionAdapter();
   }
   return new PaperExecutionAdapter();
 }
+
+// ─── Portfolio state ──────────────────────────────────────────────────────────
 
 export interface KalshiPortfolioState {
   cashUsd: number;
@@ -193,7 +209,7 @@ export async function getKalshiPortfolioState(): Promise<KalshiPortfolioState> {
 }
 
 export async function getKalshiCashBalance(): Promise<number | null> {
-  if (!ENV.kalshiEmail || !ENV.kalshiPassword) return null;
+  if (!hasKalshiCredentials()) return null;
   const client = new KalshiClient();
   const body = await client.request<{
     balance?: number;

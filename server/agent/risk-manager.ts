@@ -9,6 +9,104 @@ import type {
 } from "./types";
 import { computeExecutionMicrostructureProfile } from "./execution-microstructure";
 
+// ─── Micro-bankroll risk policy (Kalshi ~$20 bankroll) ───────────────────────
+
+export interface KalshiRiskLimits {
+  maxPositionUsd: number;           // normal cap (default $2)
+  absoluteMaxPositionUsd: number;   // hard cap (default $3)
+  maxTotalExposureUsd: number;      // total open exposure cap (default $8)
+  maxDailyLossUsd: number;          // daily loss stop (default $3)
+  minBankrollReserveUsd: number;    // must remain uncommitted (default $10)
+  maxDaysToResolution: number;      // hard reject if > N days (default 2)
+  preferredHoursMin: number;        // soft warn below (default 6)
+  preferredHoursMax: number;        // soft warn above (default 48)
+}
+
+export const DEFAULT_KALSHI_RISK_LIMITS: KalshiRiskLimits = {
+  maxPositionUsd: 2,
+  absoluteMaxPositionUsd: 3,
+  maxTotalExposureUsd: 8,
+  maxDailyLossUsd: 3,
+  minBankrollReserveUsd: 10,
+  maxDaysToResolution: 2,
+  preferredHoursMin: 6,
+  preferredHoursMax: 48,
+};
+
+export function computeKalshiPositionSize(
+  bankroll: number,
+  confidence: number,
+  limits: KalshiRiskLimits
+): number {
+  const base = Math.min(limits.maxPositionUsd, bankroll * 0.10);
+  const highConf = Math.min(limits.absoluteMaxPositionUsd, bankroll * 0.15);
+  const size = confidence >= 0.85 ? highConf : base;
+  return Math.min(size, limits.absoluteMaxPositionUsd); // hard cap $3
+}
+
+export interface MicroBankrollRiskInput {
+  sizeUsd: number;
+  bankrollUsd: number;
+  currentTotalExposureUsd: number;
+  dailyLossUsd: number;
+  hoursToResolution: number;
+  confidence: number;
+}
+
+export interface MicroBankrollRiskDecision {
+  allowed: boolean;
+  rejectionReason?: string;
+  adjustedSizeUsd?: number;
+}
+
+/** Bankroll floor = reserve + daily loss stop */
+function bankrollFloor(limits: KalshiRiskLimits): number {
+  return limits.minBankrollReserveUsd + limits.maxDailyLossUsd;
+}
+
+/**
+ * Evaluate a proposed Kalshi trade against micro-bankroll safety rules.
+ * All hard rules must pass or the trade is rejected with a specific reason.
+ */
+export function evaluateKalshiMicroBankrollRisk(
+  input: MicroBankrollRiskInput,
+  limits: KalshiRiskLimits = DEFAULT_KALSHI_RISK_LIMITS
+): MicroBankrollRiskDecision {
+  const { sizeUsd, bankrollUsd, currentTotalExposureUsd, dailyLossUsd, hoursToResolution } = input;
+
+  // 1. Hard cap on individual position size
+  if (sizeUsd > limits.absoluteMaxPositionUsd) {
+    return { allowed: false, rejectionReason: "rejected_size_hard_cap" };
+  }
+
+  // 2. Total exposure cap
+  if (currentTotalExposureUsd + sizeUsd > limits.maxTotalExposureUsd) {
+    return { allowed: false, rejectionReason: "rejected_exposure_cap" };
+  }
+
+  // 3. Reserve floor — must keep minBankrollReserveUsd uncommitted
+  if (bankrollUsd - sizeUsd < limits.minBankrollReserveUsd) {
+    return { allowed: false, rejectionReason: "rejected_reserve_floor" };
+  }
+
+  // 4. Daily loss stop
+  if (dailyLossUsd >= limits.maxDailyLossUsd) {
+    return { allowed: false, rejectionReason: "rejected_daily_loss_limit" };
+  }
+
+  // 5. Bankroll floor (reserve + daily stop)
+  if (bankrollUsd < bankrollFloor(limits)) {
+    return { allowed: false, rejectionReason: "rejected_bankroll_floor" };
+  }
+
+  // 6. Duration hard reject (> 2 days)
+  if (hoursToResolution > limits.maxDaysToResolution * 24) {
+    return { allowed: false, rejectionReason: "rejected_duration_too_long" };
+  }
+
+  return { allowed: true, adjustedSizeUsd: sizeUsd };
+}
+
 export const DEFAULT_RISK_LIMITS: RiskLimits = {
   minEdge: 0.06,
   minConfidence: 0.7,

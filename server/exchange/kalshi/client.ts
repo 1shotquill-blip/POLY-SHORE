@@ -1,64 +1,56 @@
-import { KalshiAuthManager } from "./auth";
+import { ENV } from "../../_core/env";
+import { buildKalshiAuthHeaders, KalshiConfigurationError } from "./auth";
 
 export const KALSHI_BASE_URL =
-  "https://trading-api.kalshi.com/trade-api/v2";
+  "https://external-api.kalshi.com/trade-api/v2";
 
 export interface KalshiClientOptions {
   baseUrl?: string;
-  auth?: KalshiAuthManager;
 }
 
 export interface KalshiRequestOptions {
   method?: string;
   body?: unknown;
+  /** If false, omit auth headers (for public endpoints) */
   authenticated?: boolean;
 }
 
 export class KalshiClient {
   private readonly baseUrl: string;
-  private readonly auth: KalshiAuthManager;
 
   constructor(options: KalshiClientOptions = {}) {
-    this.baseUrl = options.baseUrl ?? KALSHI_BASE_URL;
-    this.auth =
-      options.auth ??
-      new KalshiAuthManager({
-        baseUrl: this.baseUrl,
-      });
+    this.baseUrl = options.baseUrl ?? ENV.kalshiApiBase ?? KALSHI_BASE_URL;
   }
 
   async request<T>(
     path: string,
     options: KalshiRequestOptions = {}
   ): Promise<T> {
-    return this.requestOnce<T>(path, options, false);
-  }
-
-  private async requestOnce<T>(
-    path: string,
-    options: KalshiRequestOptions,
-    retried: boolean
-  ): Promise<T> {
+    const method = (options.method ?? "GET").toUpperCase();
     const headers: Record<string, string> = {
       accept: "application/json",
     };
-    if (options.body !== undefined) headers["content-type"] = "application/json";
-    if (options.authenticated !== false) {
-      headers.authorization = `Bearer ${await this.auth.getToken(retried)}`;
+    if (options.body !== undefined) {
+      headers["content-type"] = "application/json";
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      method: options.method ?? "GET",
+    if (options.authenticated !== false) {
+      const authHeaders = buildKalshiAuthHeaders(method, path);
+      Object.assign(headers, authHeaders);
+    }
+
+    const url = `${this.baseUrl}${path}`;
+    const response = await fetch(url, {
+      method,
       headers,
       body:
         options.body === undefined ? undefined : JSON.stringify(options.body),
     });
-    if (response.status === 401 && !retried && options.authenticated !== false) {
-      this.auth.clear();
-      return this.requestOnce<T>(path, options, true);
-    }
+
     if (!response.ok) {
-      throw new Error(`Kalshi request failed: ${response.status}`);
+      throw new Error(
+        `Kalshi request failed: ${response.status} ${response.statusText} — ${method} ${path}`
+      );
     }
     return (await response.json()) as T;
   }

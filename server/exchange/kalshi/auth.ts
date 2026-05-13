@@ -1,15 +1,8 @@
+import { createSign } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { ENV } from "../../_core/env";
 
-export interface KalshiAuthConfig {
-  email?: string;
-  password?: string;
-  baseUrl?: string;
-}
-
-export interface KalshiTokenState {
-  token: string;
-  expiresAt?: Date;
-}
+// ─── Error types ─────────────────────────────────────────────────────────────
 
 export class KalshiConfigurationError extends Error {
   constructor(message: string) {
@@ -18,42 +11,107 @@ export class KalshiConfigurationError extends Error {
   }
 }
 
-export class KalshiAuthManager {
-  private tokenState: KalshiTokenState | null = null;
-  private readonly baseUrl: string;
+// ─── RSA-PSS signing ─────────────────────────────────────────────────────────
 
-  constructor(private readonly config: KalshiAuthConfig = {}) {
-    this.baseUrl =
-      config.baseUrl ?? "https://trading-api.kalshi.com/trade-api/v2";
-  }
-
-  async getToken(forceRefresh = false): Promise<string> {
-    if (!forceRefresh && this.tokenState?.token) return this.tokenState.token;
-
-    const email = this.config.email ?? ENV.kalshiEmail;
-    const password = this.config.password ?? ENV.kalshiPassword;
-    if (!email || !password) {
+/**
+ * Returns the PEM private key from env vars:
+ *  1. KALSHI_PRIVATE_KEY_PEM (inline PEM string)
+ *  2. KALSHI_PRIVATE_KEY_PATH (path to PEM file)
+ *
+ * Returns null if neither is set (paper mode).
+ */
+function loadPrivateKeyPem(): string | null {
+  if (ENV.kalshiPrivateKeyPem) return ENV.kalshiPrivateKeyPem;
+  if (ENV.kalshiPrivateKeyPath) {
+    try {
+      return readFileSync(ENV.kalshiPrivateKeyPath, "utf-8");
+    } catch {
       throw new KalshiConfigurationError(
-        "KALSHI_EMAIL and KALSHI_PASSWORD are required for Kalshi live auth"
+        `Cannot read KALSHI_PRIVATE_KEY_PATH: ${ENV.kalshiPrivateKeyPath}`
       );
     }
+  }
+  return null;
+}
 
-    const response = await fetch(`${this.baseUrl}/login`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!response.ok) {
-      throw new Error(`Kalshi auth failed: ${response.status}`);
-    }
-    const body = (await response.json()) as Record<string, unknown>;
-    const token = String(body.token ?? body.access_token ?? "");
-    if (!token) throw new Error("Kalshi auth response did not include token");
-    this.tokenState = { token };
-    return token;
+export interface KalshiAuthHeaders {
+  "KALSHI-ACCESS-KEY": string;
+  "KALSHI-ACCESS-TIMESTAMP": string;
+  "KALSHI-ACCESS-SIGNATURE": string;
+}
+
+/**
+ * Produces Kalshi RSA-PSS auth headers.
+ * @param method  HTTP method, e.g. "GET"
+ * @param path    Full path including query string, e.g. /trade-api/v2/portfolio/balance?foo=bar
+ */
+export function buildKalshiAuthHeaders(
+  method: string,
+  path: string
+): KalshiAuthHeaders {
+  const apiKeyId = ENV.kalshiApiKeyId;
+  const privateKeyPem = loadPrivateKeyPem();
+
+  if (!apiKeyId || !privateKeyPem) {
+    throw new KalshiConfigurationError(
+      "KALSHI_API_KEY_ID and KALSHI_PRIVATE_KEY_PEM (or KALSHI_PRIVATE_KEY_PATH) are required for Kalshi live auth"
+    );
   }
 
-  clear(): void {
-    this.tokenState = null;
+  const timestamp = new Date().toISOString();
+  // Strip query string before signing
+  const pathWithoutQuery = path.split("?")[0];
+  const payload = timestamp + method.toUpperCase() + pathWithoutQuery;
+
+  const sign = createSign("RSA-PSS");
+  sign.update(payload);
+  sign.end();
+  const signature = sign.sign(
+    {
+      key: privateKeyPem,
+      dsaEncoding: "ieee-p1363",
+      padding: 6, // RSA_PKCS1_PSS_PADDING
+      saltLength: 32,
+    },
+    "base64"
+  );
+
+  return {
+    "KALSHI-ACCESS-KEY": apiKeyId,
+    "KALSHI-ACCESS-TIMESTAMP": timestamp,
+    "KALSHI-ACCESS-SIGNATURE": signature,
+  };
+}
+
+/**
+ * Returns true if live-mode credentials are configured.
+ */
+export function hasKalshiCredentials(): boolean {
+  return !!(ENV.kalshiApiKeyId && (ENV.kalshiPrivateKeyPem || ENV.kalshiPrivateKeyPath));
+}
+
+// ─── Legacy compat stubs (kept so existing imports don't break) ───────────────
+
+/** @deprecated Use buildKalshiAuthHeaders instead */
+export interface KalshiAuthConfig {
+  email?: string;
+  password?: string;
+  baseUrl?: string;
+}
+
+/** @deprecated No longer used; RSA-PSS signing replaces token auth */
+export interface KalshiTokenState {
+  token: string;
+  expiresAt?: Date;
+}
+
+/** @deprecated No longer used; auth is stateless RSA-PSS per-request */
+export class KalshiAuthManager {
+  constructor(_config: KalshiAuthConfig = {}) {}
+  async getToken(_forceRefresh = false): Promise<string> {
+    throw new KalshiConfigurationError(
+      "KalshiAuthManager.getToken() is deprecated. Use buildKalshiAuthHeaders() for RSA-PSS auth."
+    );
   }
+  clear(): void {}
 }

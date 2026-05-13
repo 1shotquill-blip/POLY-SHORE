@@ -1,5 +1,7 @@
 import type { AgentMarket, EnsembleDecision, RiskDecision } from "./types";
 import { getClobReferencePrice, computeMicrostructureScore } from "./book-pricing";
+import type { KalshiRiskLimits } from "./risk-manager";
+import { DEFAULT_KALSHI_RISK_LIMITS } from "./risk-manager";
 
 export interface MarketSelectionWeights {
   edge: number;
@@ -105,6 +107,51 @@ export function computeConsensusDivergenceScore(
   const gap = Math.abs(estimatedProbability - referencePrice);
   // 0.15 (15%) → score 1.0; scales linearly down to 0 at 0% gap.
   return clamp01(gap / 0.15);
+}
+
+// ─── Kalshi duration filter ───────────────────────────────────────────────────
+
+export interface KalshiDurationFilterResult {
+  allowed: boolean;
+  reason?: string;
+  /** Non-fatal warning when outside preferred window but still allowed */
+  warning?: string;
+}
+
+/**
+ * Filter Kalshi markets by time-to-expiry policy.
+ *
+ * Hard reject:  hoursToExpiry > limits.maxDaysToResolution * 24
+ * Soft warn:    outside [preferredHoursMin, preferredHoursMax]
+ */
+export function filterKalshiMarketDuration(
+  market: AgentMarket,
+  now: Date = new Date(),
+  limits: KalshiRiskLimits = DEFAULT_KALSHI_RISK_LIMITS
+): KalshiDurationFilterResult {
+  const hoursToExpiry =
+    (market.expiresAt.getTime() - now.getTime()) / 3_600_000;
+
+  if (hoursToExpiry <= 0) {
+    return { allowed: false, reason: "rejected_duration_too_long" };
+  }
+
+  const hardLimitHours = limits.maxDaysToResolution * 24;
+  if (hoursToExpiry > hardLimitHours) {
+    return { allowed: false, reason: "rejected_duration_too_long" };
+  }
+
+  if (
+    hoursToExpiry < limits.preferredHoursMin ||
+    hoursToExpiry > limits.preferredHoursMax
+  ) {
+    return {
+      allowed: true,
+      warning: "preferred_range_miss",
+    };
+  }
+
+  return { allowed: true };
 }
 
 // ─── Main scoring function ───────────────────────────────────────────────────
