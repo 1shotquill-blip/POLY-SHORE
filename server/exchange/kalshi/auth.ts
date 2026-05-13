@@ -58,7 +58,8 @@ export function buildKalshiAuthHeaders(
     );
   }
 
-  const timestamp = new Date().toISOString();
+  // Kalshi requires timestamp as Unix milliseconds string, not ISO
+  const timestamp = Date.now().toString();
   // Strip query string before signing
   const pathWithoutQuery = path.split("?")[0];
   const payload = timestamp + method.toUpperCase() + pathWithoutQuery;

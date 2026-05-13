@@ -123,13 +123,17 @@ export function validateProductionEnv(): void {
 
   const missing: string[] = [];
 
-  if (!ENV.polymarketPrivateKey) missing.push("POLYMARKET_PRIVATE_KEY");
-  if (!ENV.polymarketFunderAddress) missing.push("POLYMARKET_FUNDER_ADDRESS");
-  if (!ENV.polymarketApiKey) missing.push("POLYMARKET_API_KEY");
-  if (!ENV.polymarketApiSecret) missing.push("POLYMARKET_API_SECRET");
-  if (!ENV.polymarketApiPassphrase) missing.push("POLYMARKET_API_PASSPHRASE");
+  // Core infra — always required in live mode
   if (!ENV.databaseUrl) missing.push("DATABASE_URL");
   if (!ENV.cookieSecret) missing.push("JWT_SECRET");
+
+  // Exchange-specific — only validate if that exchange is actually configured
+  const kalshiConfigured = !!(ENV.kalshiApiKeyId && (ENV.kalshiPrivateKeyPem || ENV.kalshiPrivateKeyPath));
+  const polymarketConfigured = !!(ENV.polymarketPrivateKey && ENV.polymarketFunderAddress);
+
+  if (!kalshiConfigured && !polymarketConfigured) {
+    missing.push("at least one exchange (KALSHI_API_KEY_ID+key or POLYMARKET_PRIVATE_KEY+FUNDER_ADDRESS)");
+  }
 
   if (missing.length > 0) {
     throw new Error(
