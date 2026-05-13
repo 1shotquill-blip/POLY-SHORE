@@ -46,7 +46,7 @@ const DEFAULT_CONFIG: BotEngineConfig = {
   minLiquidity: 1_000,
   maxSpread: 0.05,
   orderTtlMs: ENV.orderTtlMs,
-  maxMarketsPerTick: 20,
+  maxMarketsPerTick: Number(process.env.MAX_MARKETS_PER_TICK ?? "5"),
   maxOrdersPerTick: 1,
 };
 

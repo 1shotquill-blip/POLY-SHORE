@@ -204,9 +204,14 @@ export async function getExchangePortfolioState(
     };
   }
 
-  const adapter = await PolymarketAdapter.create();
+  const polymarketConfigured = !!(
+    ENV.polymarketPrivateKey && ENV.polymarketFunderAddress
+  );
+
   const [polyState, kalshiState] = await Promise.allSettled([
-    adapter.reconciler().poll(),
+    polymarketConfigured
+      ? PolymarketAdapter.create().then(adapter => adapter.reconciler().poll())
+      : Promise.reject(new Error("Polymarket not configured — Kalshi-only mode")),
     getKalshiPortfolioState(),
   ]);
 

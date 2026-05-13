@@ -455,6 +455,36 @@ async function callOAI(
 
   if (!response.ok) {
     const raw = await response.text().catch(() => "");
+    // If json_schema is unsupported (Groq/some providers), retry with json_object
+    if (
+      response.status === 400 &&
+      raw.includes("json_schema") &&
+      payload.response_format &&
+      (payload.response_format as { type: string }).type === "json_schema"
+    ) {
+      payload.response_format = { type: "json_object" };
+      // Groq requires "json" to appear in messages when using json_object format
+      const msgs = payload.messages as Array<{ role: string; content: string }>;
+      const lastUser = msgs.findLastIndex(m => m.role === "user");
+      if (lastUser >= 0 && !msgs[lastUser].content.toLowerCase().includes("json")) {
+        msgs[lastUser] = { ...msgs[lastUser], content: msgs[lastUser].content + "\n\nRespond with valid JSON." };
+      }
+      const retry = await fetch(provider.url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${provider.key}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      if (retry.ok) return (await retry.json()) as InvokeResult;
+      const retryRaw = await retry.text().catch(() => "");
+      const retryErr = new Error(
+        `LLM ${provider.name} ${retry.status} ${retry.statusText} – ${retryRaw.slice(0, 500)}`
+      ) as Error & { status: number };
+      retryErr.status = retry.status;
+      throw retryErr;
+    }
     const err = new Error(
       `LLM ${provider.name} ${response.status} ${response.statusText} – ${raw.slice(0, 500)}`
     ) as Error & { status: number };
