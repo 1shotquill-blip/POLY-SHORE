@@ -215,11 +215,18 @@ type OAIProvider = { type: "oai"; url: string; key: string; name: string };
 type OllamaProvider = { type: "ollama"; host: string; key: string; name: string };
 type Provider = OAIProvider | OllamaProvider;
 
-/** Returns ordered list of providers to try. Never throws; may return empty list. */
+/**
+ * Returns ordered list of providers to try, shaped by LLM_PROVIDER_STRATEGY:
+ *  - "local-only"  → Groq → Ollama (no OpenAI/Anthropic)
+ *  - "cloud-only"  → OpenAI → Anthropic → Groq (skip Ollama)
+ *  - "hybrid"      → Groq → Ollama → OpenAI → Anthropic (use best available)
+ * Never throws; may return empty list.
+ */
 function buildProviderChain(model?: string): Provider[] {
   const chain: Provider[] = [];
+  const strategy = ENV.llmProviderStrategy;
 
-  // 1. Groq — primary if GROQ_API_KEY is set (fast, free tier)
+  // 1. Groq — primary fast provider (all strategies)
   if (ENV.groqApiKey) {
     chain.push({
       type: "oai",
@@ -229,8 +236,8 @@ function buildProviderChain(model?: string): Provider[] {
     });
   }
 
-  // 2. Ollama Cloud — if OLLAMA_API_KEY is set
-  if (ENV.ollamaApiKey) {
+  // 2. Ollama Cloud — local-only and hybrid
+  if (ENV.ollamaApiKey && strategy !== "cloud-only") {
     chain.push({
       type: "ollama",
       host: ENV.ollamaHost,
@@ -239,7 +246,27 @@ function buildProviderChain(model?: string): Provider[] {
     });
   }
 
-  // 2. Fallbacks from LLM_FALLBACK_PROVIDERS (comma-separated: openrouter,grok)
+  // 3. OpenAI — cloud-only and hybrid
+  if (ENV.openaiApiKey && strategy !== "local-only") {
+    chain.push({
+      type: "oai",
+      url: "https://api.openai.com/v1/chat/completions",
+      key: ENV.openaiApiKey,
+      name: `openai/${ENV.openaiModel}`,
+    });
+  }
+
+  // 4. Anthropic (via OpenAI-compat messages endpoint) — cloud-only and hybrid
+  if (ENV.anthropicApiKey && strategy !== "local-only") {
+    chain.push({
+      type: "oai",
+      url: "https://api.anthropic.com/v1/messages",
+      key: ENV.anthropicApiKey,
+      name: `anthropic/${ENV.anthropicModel}`,
+    });
+  }
+
+  // 5. Fallbacks from LLM_FALLBACK_PROVIDERS (openrouter, grok, forge)
   for (const fb of ENV.llmFallbackProviders.split(",").map(s => s.trim())) {
     if (fb === "openrouter" && ENV.openrouterApiKey) {
       chain.push({
@@ -264,7 +291,7 @@ function buildProviderChain(model?: string): Provider[] {
     }
   }
 
-  // 3. Legacy fallback: forge if nothing else is configured
+  // 6. Legacy fallback: forge if nothing else configured
   if (
     chain.length === 0 &&
     !ENV.ollamaApiKey &&
@@ -279,6 +306,24 @@ function buildProviderChain(model?: string): Provider[] {
     chain.push({ type: "oai", url, key: ENV.forgeApiKey, name: "forge" });
   }
 
+  return chain;
+}
+
+/**
+ * Returns a cloud-preferred provider chain for Stage 2 probability estimation
+ * when LLM_PROVIDER_STRATEGY=hybrid. Tries OpenAI/Anthropic first, then Groq.
+ */
+export function buildCloudProviderChain(): Provider[] {
+  const chain: Provider[] = [];
+  if (ENV.openaiApiKey) {
+    chain.push({ type: "oai", url: "https://api.openai.com/v1/chat/completions", key: ENV.openaiApiKey, name: `openai/${ENV.openaiModel}` });
+  }
+  if (ENV.anthropicApiKey) {
+    chain.push({ type: "oai", url: "https://api.anthropic.com/v1/messages", key: ENV.anthropicApiKey, name: `anthropic/${ENV.anthropicModel}` });
+  }
+  if (ENV.groqApiKey) {
+    chain.push({ type: "oai", url: "https://api.groq.com/openai/v1/chat/completions", key: ENV.groqApiKey, name: `groq/${ENV.groqModel}` });
+  }
   return chain;
 }
 
@@ -522,4 +567,38 @@ export async function invokeLLM(
 
   activeProvider = "failed";
   throw lastError ?? new Error("All LLM providers failed");
+}
+
+/**
+ * Invoke LLM using an explicit provider chain (for hybrid mode Stage 2).
+ * Falls back to the standard chain if the given chain is empty.
+ */
+export async function invokeLLMWithChain(
+  chain: ReturnType<typeof buildCloudProviderChain>,
+  params: InvokeParams,
+  model?: string
+): Promise<InvokeResult> {
+  const resolvedChain = chain.length > 0 ? chain : buildProviderChain(model);
+  const resolvedModel = model ?? ENV.llmPrimaryModel;
+  let lastError: Error | undefined;
+  const t0 = Date.now();
+
+  for (const provider of resolvedChain) {
+    try {
+      const result =
+        provider.type === "ollama"
+          ? await callOllama(provider as OllamaProvider, params, resolvedModel)
+          : await callOAI(provider as OAIProvider, params, resolvedModel);
+      activeProvider = provider.name;
+      activeProviderLatencyMs = Date.now() - t0;
+      return result;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const status = (err as { status?: number }).status ?? 0;
+      if (!isRetryable(status) && status !== 0) throw lastError;
+      console.warn(`[LLM] Chain provider ${provider.name} failed, trying next: ${lastError.message.slice(0, 80)}`);
+    }
+  }
+
+  throw lastError ?? new Error("All LLM chain providers failed");
 }

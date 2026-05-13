@@ -102,6 +102,11 @@ export const ENV = {
   grokModel: process.env.GROK_MODEL ?? "grok-3",
   groqApiKey: process.env.GROQ_API_KEY ?? "",
   groqModel: process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile",
+  openaiApiKey: process.env.OPENAI_API_KEY ?? "",
+  openaiModel: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
+  anthropicModel: process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001",
+  llmProviderStrategy: (process.env.LLM_PROVIDER_STRATEGY ?? "local-only") as "local-only" | "cloud-only" | "hybrid",
   // ─── Runtime tuning (spec §3.2) — getters so operator-router mutations apply ─
   get orderTtlMs() { return Number(process.env.ORDER_TTL_MS ?? "300000"); },
   get pollIntervalMs() { return Number(process.env.POLL_INTERVAL_MS ?? "15000"); },

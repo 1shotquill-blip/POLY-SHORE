@@ -22,6 +22,8 @@ import {
 } from "./agent/velocity-exit";
 import { createExecutionAdapter } from "./exchange/polymarket/index";
 import { DEFAULT_RISK_LIMITS } from "./agent/risk-manager";
+import { calculateAdaptiveLimits, persistAdaptiveAdjustment } from "./agent/adaptive-risk";
+import { feedTradeOutcomesToMemory } from "./agent/closed-loop-learning";
 import type { ExecutionAdapter } from "./agent/execution-adapter";
 import type { RiskLimits } from "./agent/types";
 
@@ -182,6 +184,9 @@ export class BotEngine {
       return;
 
     try {
+      // Adaptive risk: recalculate limits based on recent performance each tick
+      await this.applyAdaptiveRisk();
+
       const result = await this.orchestrator.tick();
       console.log(
         `[Bot] Tick: scanned=${result.scannedMarkets} submitted=${result.submittedOrders} skipped=${result.skippedMarkets}`
@@ -500,6 +505,41 @@ ${line("Max drawdown", maxDD)}
       });
     } catch {
       // notification not critical
+    }
+  }
+
+  private async applyAdaptiveRisk(): Promise<void> {
+    if (!this.orchestrator) return;
+    try {
+      const { getRecentTrades, getEquityHistory } = await import("./db");
+      const [trades, equity] = await Promise.all([
+        getRecentTrades(20),
+        getEquityHistory(24),
+      ]);
+      const wins = trades.filter(t => Number(t.usdcValue) > Number(t.price) * Number(t.size));
+      const winRate24h = trades.length > 0 ? wins.length / trades.length : 0.5;
+      const first = equity[0];
+      const last = equity[equity.length - 1];
+      const dailyPnlUsd = first && last ? Number(last.balance) - Number(first.balance) : 0;
+
+      const baseRiskLimits: RiskLimits = {
+        ...DEFAULT_RISK_LIMITS,
+        maxOrderSizeUsd: ENV.maxPositionUsd,
+        maxDrawdownPct: ENV.maxDrawdownPct,
+        ...(this.config.riskLimits ?? {}),
+      };
+      const perf = { winRate24h, avgSpread24h: 0.04, tradeCount24h: trades.length, dailyPnlUsd };
+      const adapted = calculateAdaptiveLimits(baseRiskLimits, perf);
+
+      if (adapted._adaptive.reason !== "nominal") {
+        console.log(`[Bot] Adaptive risk: ${adapted._adaptive.reason}`);
+        await persistAdaptiveAdjustment(adapted._adaptive);
+      }
+
+      // Feed resolved trade outcomes into vector memory for closed-loop learning
+      await feedTradeOutcomesToMemory();
+    } catch {
+      // Non-fatal — never block a tick on adaptive risk failure
     }
   }
 

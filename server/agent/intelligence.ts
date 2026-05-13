@@ -1,4 +1,5 @@
-import { invokeLLM } from "../_core/llm";
+import { invokeLLM, invokeLLMWithChain, buildCloudProviderChain } from "../_core/llm";
+import { buildLessonsLearned } from "./closed-loop-learning";
 import { ENV } from "../_core/env";
 import {
   buildCategoryCalibrationContext,
@@ -210,7 +211,12 @@ async function estimateProbability(
   model: string = ENV.llmPrimaryModel
 ): Promise<ProbabilityEstimationResult> {
   const t0 = Date.now();
-  const result = await invokeLLM({
+  // In hybrid mode use cloud providers (OpenAI/Anthropic) for Stage 2
+  const useCloud = ENV.llmProviderStrategy === "hybrid";
+  const invoker = useCloud
+    ? (p: Parameters<typeof invokeLLM>[0]) => invokeLLMWithChain(buildCloudProviderChain(), p, model)
+    : (p: Parameters<typeof invokeLLM>[0]) => invokeLLM(p, model);
+  const result = await invoker({
     messages: [
       {
         role: "system",
@@ -240,6 +246,16 @@ async function estimateProbability(
           formatNewsContext(news),
           "",
           formatSocialContext(socialSignals),
+          await buildLessonsLearned({
+            anomalyScore: 0.5,
+            probabilityGap: Math.abs((market.bestAsk ?? 0.5) - 0.5),
+            liquidity: market.liquidity ?? 0,
+            volume24h: market.volume24h ?? 0,
+            spread: (market.bestAsk ?? 0.5) - (market.bestBid ?? 0.5),
+            hoursToExpiry: market.expiresAt
+              ? (new Date(market.expiresAt).getTime() - Date.now()) / 3600000
+              : 24,
+          }),
         ].join("\n"),
       },
     ],
@@ -272,7 +288,7 @@ async function estimateProbability(
       },
       strict: true,
     },
-  }, model);
+  });
 
   const text =
     typeof result.choices[0].message.content === "string"
